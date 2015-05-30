@@ -30,8 +30,8 @@ void print_server_loop(int socket_fd) {
 int str_to_uint16(const char *str, uint16_t *result)
 {
     char *end;
-    long int value = strtol(str, &end, 10);
     errno = 0;
+    long int value = strtol(str, &end, 10);
     if (errno == ERANGE || value > UINT16_MAX || value < 0
             || end == str || *end != '\0')
         return -1;
