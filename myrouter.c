@@ -27,18 +27,39 @@ void print_server_loop(int socket_fd) {
     }
 }
 
-int main(void) {
-    int socket_fd;
-    struct sockaddr_in server_addr;
-    uint16_t port_no = 10001;
+int str_to_uint16(const char *str, uint16_t *result)
+{
+    char *end;
+    long int value = strtol(str, &end, 10);
+    errno = 0;
+    if (errno == ERANGE || value > UINT16_MAX || value < 0
+            || end == str || *end != '\0')
+        return -1;
+    *result = (uint16_t) value;
+    return 0;
+}
+
+int main(int argc, char **argv) {
+    if (argc < 2) {
+        fprintf(stderr, "Error: No port number provided\n");
+        exit(1);
+    }
+
+    char *port_no_str = argv[1];
+    uint16_t port_no;
+    if (str_to_uint16(port_no_str, &port_no) < 0) {
+        fprintf(stderr, "Error: Invalid port number %s\n", port_no_str);
+        exit(1);
+    }
 
     // AF_INET ---> IPv4
     // SOCK_DGRAM ---> UDP
-    socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    int socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (socket_fd < 0) {
         perror("Error creating socket");
         exit(1);
     }
+    struct sockaddr_in server_addr;
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
     server_addr.sin_port = htons(port_no);
