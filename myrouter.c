@@ -14,21 +14,30 @@
 void print_server_loop(int socket_fd) {
     while (1) {
         char buffer[BUFFER_SIZE];
-        struct sockaddr remote_addr;
+        struct sockaddr_in remote_addr;
         socklen_t remote_addr_len;
         ssize_t bytes_received = recvfrom(socket_fd, buffer, BUFFER_SIZE, 0,
-                &remote_addr, &remote_addr_len);
+                (struct sockaddr *) &remote_addr, &remote_addr_len);
         if (bytes_received < 0) {
             perror("Error receiving data");
         } else {
-            printf("Received %d bytes:\n", (int) bytes_received);
+            printf("Received %d bytes ", (int) bytes_received);
+			uint16_t sender_port = ntohs(remote_addr.sin_port);
+			uint32_t sender_ip_addr = ntohl(remote_addr.sin_addr.s_addr);
+			unsigned char ip_bytes[4];
+			ip_bytes[0] = sender_ip_addr & 0xFF;
+			ip_bytes[1] = (sender_ip_addr>>8) & 0xFF;
+			ip_bytes[2] = (sender_ip_addr>>16) & 0xFF;
+			ip_bytes[3] = (sender_ip_addr>>24) & 0xFF;
+			printf("from IP address %u.%u.%u.%u ",
+					ip_bytes[3], ip_bytes[2], ip_bytes[1], ip_bytes[0]);
+			printf("port %u:\n", sender_port);
             printf("%.*s\n", (int) bytes_received, buffer);
         }
     }
 }
 
-int str_to_uint16(const char *str, uint16_t *result)
-{
+int str_to_uint16(const char *str, uint16_t *result) {
     char *end;
     errno = 0;
     long int value = strtol(str, &end, 10);
