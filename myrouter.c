@@ -194,7 +194,7 @@ new_neighbor_list_node(uint16_t port, uint16_t cost,
 
 // TODO: Hardcoded for now
 // Definitely needs refactoring
-void initialize_neighbors0() {
+void initialize_neighbors_old() {
     if (my_port == 10000) {
         struct neighbor_list_node *b = new_neighbor_list_node(10001, 3, NULL);
         struct neighbor_list_node *e = new_neighbor_list_node(10005, 1, b);
@@ -208,16 +208,13 @@ void initialize_neighbors0() {
     // TODO: More data missing
 }
 
-// The router finds its immediate neighbors from file
-// Initialize neighbors from tuples of 
-//      <source router, destination router, destination UDP port, link cost>
-// (seems to be destination port, even though spec says source port?)
-void initialize_neighbors(const char *fileName) {
 
-    struct neighbor_list_node *next = NULL; // tail node added first, has NULL next
-    struct neighbor_list_node* current = NULL;
 
-    FILE* f = fopen(fileName, "rt");
+void find_label(const char *file_name) {
+    // find first edge where dest port matches this router's port
+    // the dest label is then the label corresponding to this port
+
+    FILE* f = fopen(file_name, "rt");
     char line[MAX_LINE_LEN];
 
     while(fgets(line, MAX_LINE_LEN, f) != NULL){
@@ -226,12 +223,52 @@ void initialize_neighbors(const char *fileName) {
         uint16_t port;
         uint16_t cost;
 
-        //int isRead = sscanf.... // TODO error check
-        sscanf(line, "%c,%c,%" SCNd16 ",%" SCNd16 "", &src, &dest, &port, &cost);
-        //sscanf(line, "%c,%c,%u,%u", &src, &dest, &port, &cost);
-        // TODO non symmetric edges possible?
-        if (src == my_label){
+        if (sscanf(line, "%c,%c,%" SCNd16 ",%" SCNd16 "", &src, &dest, &port, &cost) < 4){
+            fprintf(stderr, "Error: cannot read network topology file");
+            exit(1);
+        }
+
+        if (port == my_port){
+            my_label = dest;
+            fclose(f);
+            return;
+        }
+    }
+    // if port not found while scanning, error
+    fclose(f);
+    fprintf(stderr, "Error: Port number not in network topology file\n");
+    exit(1);
+}
+
+// The router finds its immediate neighbors from file
+// Initialize neighbors from tuples of 
+//      <source router, destination router, destination UDP port, link cost>
+// (seems to be destination port, even though spec says source port?)
+void initialize_neighbors(const char *file_name) {
+
+    struct neighbor_list_node *next = NULL; // tail node added first, has NULL next
+    struct neighbor_list_node* current = NULL;
+
+    FILE* f = fopen(file_name, "rt");
+    char line[MAX_LINE_LEN];
+
+    while(fgets(line, MAX_LINE_LEN, f) != NULL){
+        char src;
+        char dest;
+        uint16_t port;
+        uint16_t cost;
+
+        // TODO check if sscanf was successful
+        if (sscanf(line, "%c,%c,%" SCNd16 ",%" SCNd16 "", &src, &dest, &port, &cost) < 4){
+            //sscanf(line, "%c,%c,%u,%u", &src, &dest, &port, &cost);
+            fprintf(stderr, "Error: cannot read network topology file");
+            exit(1);
+
+        }
+
+        if (src == my_label) {
             current = new_neighbor_list_node(port, cost, next);
+            // TODO update entry and DV length
             next = current;
         }
     }
@@ -239,7 +276,7 @@ void initialize_neighbors(const char *fileName) {
     fclose(f);
     my_neighbor_list_head = current;
 
-
+    return;
 }
 
 int str_to_uint16(const char *str, uint16_t *result) {
@@ -265,11 +302,12 @@ int main(int argc, char **argv) {
         exit(1);
     }
 
-    char* my_label_str = argv[2];
-
 
     //initialize_neighbors();
-    initialize_neighbors("sample_topology.txt"); // TODO give user option to specify file
+    // TODO give user option to specify file
+    find_label("sample_topology.txt"); // find node's own name
+    initialize_neighbors("sample_topology.txt"); 
+
 
     // AF_INET ---> IPv4
     // SOCK_DGRAM ---> UDP
