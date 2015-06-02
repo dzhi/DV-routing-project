@@ -6,7 +6,12 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 
+// Size of the buffer for packet payload
 #define BUFFER_SIZE 65536
+
+// Maximum number of routers supported, not including this one
+// (Really only needs to be 5 for the purposes of the project)
+#define DV_CAPACITY 16
 
 enum packet_type {
     DATA_PACKET = 1,
@@ -17,20 +22,72 @@ struct dv_entry {
     uint16_t port;
     uint16_t cost;
 };
-void ntoh_dv_entry (struct dv_entry *n, struct dv_entry *h) {
+void ntoh_dv_entry(struct dv_entry *n, struct dv_entry *h) {
     h->port = ntohs(n->port);
     h->cost = ntohs(n->cost);
 }
-void hton_dv_entry (struct dv_entry *h, struct dv_entry *n) {
+void hton_dv_entry(struct dv_entry *h, struct dv_entry *n) {
     n->port = htons(h->port);
     n->cost = htons(h->cost);
+}
+
+// Singly linked list of information about neighboring nodes
+struct neighbor_list_node {
+    // Port number of this neighbor, and the cost of the link to this neighbor
+    struct dv_entry entry;
+    struct dv_entry *dv; // The neighbor node's DV (an array of DV entries)
+    int dv_length; // Number of entries in the neighbor node's DV
+    struct neighbor_list_node *next;
+};
+
+struct neighbor_list_node *
+neighbor_list_find(struct neighbor_list_node *list_head, uint16_t port) {
+    struct neighbor_list_node *node = list_head;
+    for (; node!=NULL; node = node->next) {
+        if (node->entry.port == port) {
+            return node;
+        }
+    }
+    return NULL;
+}
+
+//-----------------------------------------------------------------------------
+// Global variables
+uint16_t my_port;
+struct dv_entry my_dv[DV_CAPACITY];
+int my_dv_length = 0;
+struct neighbor_list_node *my_neighbor_list_head = NULL;
+//-----------------------------------------------------------------------------
+
+void broadcast_my_dv(int socket_fd) {
+    char message[(DV_CAPACITY+1)*(sizeof(struct dv_entry))];
+    // See comment on message format
+    message[0] = (char) DV_PACKET;
+    struct dv_entry *dv = ((struct dv_entry *) message)+1;
+    int i;
+    for (i=0; i<my_dv_length; i++) {
+        hton_dv_entry(&(my_dv[i]), &(dv[i]));
+    }
+
+    struct neighbor_list_node *node = my_neighbor_list_head;
+    for (; node!=NULL; node = node->next) {
+        struct sockaddr_in dest_addr;
+        dest_addr.sin_family = AF_INET;
+        dest_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK); // 127.0.0.1
+        dest_addr.sin_port = htons(node->entry.port);
+        if (sendto(socket_fd, message,
+                (my_dv_length+1)*(sizeof(struct dv_entry)),
+                0, (struct sockaddr *) &dest_addr, sizeof dest_addr) < 0) {
+            perror("Local error trying to send packet");
+        }
+    }
 }
 
 // Message format:
 // 1 byte indicating that this is a DV packet
 // Padding to fill the length of a dv_entry
 // 0 or more DV entries
-void handle_dv_packet(uint16_t sender_port,
+void handle_dv_packet(int socket_fd, uint16_t sender_port,
         char *buffer, ssize_t bytes_received) {
     if (bytes_received % sizeof(struct dv_entry) != 0) {
         printf("Message not understood\n");
@@ -43,11 +100,14 @@ void handle_dv_packet(uint16_t sender_port,
         ntoh_dv_entry((struct dv_entry *)(buffer+i), &e);
         printf("Entry: Port %u cost %u\n", e.port, e.cost);
     }
+    // TODO: Use Bellman-Ford to update my_dv
+    // TODO: Only broadcast if my_dv changed
+    broadcast_my_dv(socket_fd);
 }
 
-void print_hexadecimal(char *bytes, int len) {
+void print_hexadecimal(char *bytes, int length) {
     int i;
-    for (i=0; i<len; i++) {
+    for (i=0; i<length; i++) {
         if (i!=0) {
             if (i%16 == 0)
                 printf("\n");
@@ -62,6 +122,9 @@ void print_hexadecimal(char *bytes, int len) {
 //      echo -n "Test" > /dev/udp/localhost/10001
 // Send hexadecimal bytes in Bash using
 //      echo 54657374 | xxd -r -p > /dev/udp/localhost/10001
+// Or instead of "... > /dev/udp/localhost/10001", use
+//      ... | nc -u -p 12345 -w0 localhost 10001
+// to specify the sending port (here, 12345) and not be Bash-specific.
 void server_loop(int socket_fd) {
     char buffer[BUFFER_SIZE];
     struct sockaddr_in remote_addr;
@@ -85,7 +148,7 @@ void server_loop(int socket_fd) {
     printf("from IP address %u.%u.%u.%u ",
             ip_bytes[3], ip_bytes[2], ip_bytes[1], ip_bytes[0]);
     printf("port %u:\n", sender_port);
-    printf("ASCII: %.*s\n", (int) bytes_received, buffer);
+    // printf("ASCII: %.*s\n", (int) bytes_received, buffer);
     printf("Hexadecimal:\n");
     print_hexadecimal(buffer, bytes_received);
     printf("\n");
@@ -95,16 +158,48 @@ void server_loop(int socket_fd) {
         return;
     }
 
-    switch ((unsigned char) buffer[0]) {
+    switch (buffer[0]) {
         case DATA_PACKET:
             printf("Data packet received (behavior not yet implemented)\n");
         break;
         case DV_PACKET:
-            handle_dv_packet(sender_port, buffer, bytes_received);
+            handle_dv_packet(socket_fd, sender_port, buffer, bytes_received);
         break;
         default:
             printf("Message not understood\n");
     }
+}
+
+struct neighbor_list_node *
+new_neighbor_list_node(uint16_t port, uint16_t cost,
+        struct neighbor_list_node *next) {
+    struct neighbor_list_node *n = malloc(sizeof(struct neighbor_list_node));
+    if (n==NULL) {
+        fprintf(stderr, "Error: Memory allocation failed\n");
+        exit(1);
+    }
+    n->entry.port = port;
+    n->entry.cost = cost;
+    n->dv = NULL;
+    n->dv_length = 0;
+    n->next = next;
+    return n;
+}
+
+// TODO: Hardcoded for now
+// Definitely needs refactoring
+void initialize_neighbors() {
+    if (my_port == 10000) {
+        struct neighbor_list_node *b = new_neighbor_list_node(10001, 3, NULL);
+        struct neighbor_list_node *e = new_neighbor_list_node(10005, 1, b);
+        my_neighbor_list_head = e;
+        my_dv[0].port = 10001;
+        my_dv[0].cost = 3;
+        my_dv[1].port = 10005;
+        my_dv[1].cost = 1;
+        my_dv_length = 2;
+    }
+    // TODO: More data missing
 }
 
 int str_to_uint16(const char *str, uint16_t *result) {
@@ -125,11 +220,12 @@ int main(int argc, char **argv) {
     }
 
     char *port_no_str = argv[1];
-    uint16_t port_no;
-    if (str_to_uint16(port_no_str, &port_no) < 0) {
+    if (str_to_uint16(port_no_str, &my_port) < 0) {
         fprintf(stderr, "Error: Invalid port number %s\n", port_no_str);
         exit(1);
     }
+
+    initialize_neighbors();
 
     // AF_INET ---> IPv4
     // SOCK_DGRAM ---> UDP
@@ -141,7 +237,7 @@ int main(int argc, char **argv) {
     struct sockaddr_in server_addr;
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    server_addr.sin_port = htons(port_no);
+    server_addr.sin_port = htons(my_port);
     if (bind(socket_fd,
             (struct sockaddr *) &server_addr,
             sizeof server_addr) < 0) {
