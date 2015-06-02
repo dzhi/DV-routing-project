@@ -5,6 +5,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
+#include <inttypes.h> // string formatting for uint16_t
 
 // Size of the buffer for packet payload
 #define BUFFER_SIZE 65536
@@ -12,6 +13,9 @@
 // Maximum number of routers supported, not including this one
 // (Really only needs to be 5 for the purposes of the project)
 #define DV_CAPACITY 16
+
+// Max line size in topology file (for fgets)
+#define MAX_LINE_LEN 80
 
 enum packet_type {
     DATA_PACKET = 1,
@@ -53,6 +57,8 @@ neighbor_list_find(struct neighbor_list_node *list_head, uint16_t port) {
 
 //-----------------------------------------------------------------------------
 // Global variables
+char my_label; // used find immediate neighbors in topology files
+// TODO set own label. also, not sure if okay to assume node names are 1 char?
 uint16_t my_port;
 struct dv_entry my_dv[DV_CAPACITY];
 int my_dv_length = 0;
@@ -188,7 +194,7 @@ new_neighbor_list_node(uint16_t port, uint16_t cost,
 
 // TODO: Hardcoded for now
 // Definitely needs refactoring
-void initialize_neighbors() {
+void initialize_neighbors0() {
     if (my_port == 10000) {
         struct neighbor_list_node *b = new_neighbor_list_node(10001, 3, NULL);
         struct neighbor_list_node *e = new_neighbor_list_node(10005, 1, b);
@@ -200,6 +206,40 @@ void initialize_neighbors() {
         my_dv_length = 2;
     }
     // TODO: More data missing
+}
+
+// The router finds its immediate neighbors from file
+// Initialize neighbors from tuples of 
+//      <source router, destination router, destination UDP port, link cost>
+// (seems to be destination port, even though spec says source port?)
+void initialize_neighbors(const char *fileName) {
+
+    struct neighbor_list_node *next = NULL; // tail node added first, has NULL next
+    struct neighbor_list_node* current = NULL;
+
+    FILE* f = fopen(fileName, "rt");
+    char line[MAX_LINE_LEN];
+
+    while(fgets(line, MAX_LINE_LEN, f) != NULL){
+        char src;
+        char dest;
+        uint16_t port;
+        uint16_t cost;
+
+        //int isRead = sscanf.... // TODO error check
+        sscanf(line, "%c,%c,%" SCNd16 ",%" SCNd16 "", &src, &dest, &port, &cost);
+        //sscanf(line, "%c,%c,%u,%u", &src, &dest, &port, &cost);
+        // TODO non symmetric edges possible?
+        if (src == my_label){
+            current = new_neighbor_list_node(port, cost, next);
+            next = current;
+        }
+    }
+
+    fclose(f);
+    my_neighbor_list_head = current;
+
+
 }
 
 int str_to_uint16(const char *str, uint16_t *result) {
@@ -225,7 +265,11 @@ int main(int argc, char **argv) {
         exit(1);
     }
 
-    initialize_neighbors();
+    char* my_label_str = argv[2];
+
+
+    //initialize_neighbors();
+    initialize_neighbors("sample_topology.txt"); // TODO give user option to specify file
 
     // AF_INET ---> IPv4
     // SOCK_DGRAM ---> UDP

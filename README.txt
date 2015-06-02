@@ -16,3 +16,8 @@ not yet implemented. See "TODO" comments for more known issues.
 Known bugs:
 -   The first time the "router" receives a message, it thinks it received the
     message from IP address 0.0.0.0 port 0 for some reason.
+
+Neighbor initialization TODOs:
+- will either have user specify label of router on command line or 
+automatically assign labels by reading port numbers
+- doesn't handle if router is destination in an edge
