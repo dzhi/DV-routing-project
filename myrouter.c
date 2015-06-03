@@ -80,7 +80,7 @@ uint16_t my_port;
 struct dv_entry my_dv[DV_CAPACITY];
 int my_dv_length = 0;
 struct neighbor_list_node *my_neighbor_list_head = NULL;
-int my_socket_fd; // needs to be global for sig handler
+int my_socket_fd; // Needs to be global for sig handler
 //-----------------------------------------------------------------------------
 
 void broadcast_my_dv(int socket_fd) {
@@ -267,17 +267,14 @@ void handle_kill_signal(int sig) {
         }
     }
 
-    // let self be killed
-    //exit(0);
-    signal(sig, SIG_DFL); // restore default behavior
+    signal(sig, SIG_DFL); // Restore default behavior
     raise(sig);
-
     return;
 }
 
-// handle if neighbor is killed
 void handle_killed_packet(uint16_t sender_port) {
-    // note: doesn't matter what rest of message is, just that neighbor was killed
+    // Note: doesn't matter what rest of message is, just that neighbor was
+    // killed
     printf("Killed_packet from port %u:\n", sender_port);
 
     struct neighbor_list_node *sender =
@@ -288,42 +285,19 @@ void handle_killed_packet(uint16_t sender_port) {
         return;
     }
 
-    // Dead neighbor is now unreachable, so delete its entry from
-    //  my_dv. We'll do this by moving the last entry into the
-    //  deleted entry's slot.
-
-    // Find what delete in my_dv
+    // Dead neighbor is now unreachable, so delete its entry from my_dv. We'll
+    //  do this by moving the last entry into the deleted entry's slot.
     struct dv_entry *to_delete = dv_find(my_dv, my_dv_length, sender->port);
     if (to_delete == NULL) {
         printf("Warning: Sender not found in my_dv, may have already been removed\n");
         return;
     }
-
-    // debugging print statement
-    /*printf("my_dv before deletion\n"); 
-    for (int i = 0; i < my_dv_length; i++){
-        printf("%u ", my_dv[i].dest_port);
-    }
-    printf("\n\n");
-    */
-
-    printf("DV update: Deletion: Dest %u no longer reachable (killed)\n",
-            to_delete->dest_port);
-    *to_delete = my_dv[my_dv_length-1]; // point to last entry instead
+    printf("DV update: Deletion: Neighbor %u died\n", to_delete->dest_port);
+    *to_delete = my_dv[my_dv_length-1];
     my_dv_length--;
-
-    /*    
-    printf("my_dv after deletion\n");
-    for (int i = 0; i < my_dv_length; i++){
-        printf("%u ", my_dv[i].dest_port);
-    }
-    printf("\n\n");
-    */
 
     return;
 }
-
-
 
 void print_hexadecimal(char *bytes, int length) {
     int i;
@@ -438,7 +412,7 @@ void find_label(const char *file_name) {
     FILE* f = fopen(file_name, "rt");
     char line[MAX_LINE_LEN];
 
-    while(fgets(line, MAX_LINE_LEN, f) != NULL){
+    while (fgets(line, MAX_LINE_LEN, f) != NULL) {
         char src;
         char dest;
         uint16_t port;
@@ -455,7 +429,7 @@ void find_label(const char *file_name) {
             return;
         }
     }
-    // if port not found while scanning, error
+    // If port not found while scanning, error
     fclose(f);
     fprintf(stderr, "Error: Port number not in network topology file\n");
     exit(1);
@@ -519,8 +493,6 @@ int str_to_uint16(const char *str, uint16_t *result) {
     return 0;
 }
 
-
-
 int main(int argc, char **argv) {
     if (argc < 2) {
         fprintf(stderr, "Error: No port number provided\n");
@@ -535,10 +507,9 @@ int main(int argc, char **argv) {
 
     // initialize_neighbors_old();
     // TODO give user option to specify file
-    find_label("sample_topology.txt"); // find node's own name
+    find_label("sample_topology.txt"); // Find this node's own name
     initialize_neighbors("sample_topology.txt");
 
-    // TODO print intialized values
     struct neighbor_list_node *node = my_neighbor_list_head;
     fprintf(stdout, "My neighbors are:\n");
     for (; node!=NULL; node = node->next) {
@@ -577,7 +548,8 @@ int main(int argc, char **argv) {
 
     broadcast_my_dv(socket_fd);
 
-    // after this point (initial contact w/ neighbors), should let neighbors know if killed
+    // After this point (initial contact w/ neighbors), should let neighbors
+    //  know if killed
     signal(SIGINT, handle_kill_signal);
     signal(SIGTERM, handle_kill_signal);
     signal(SIGQUIT, handle_kill_signal);
