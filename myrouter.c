@@ -235,7 +235,7 @@ void print_hexadecimal(char *bytes, int length) {
             else if (i%4 == 0)
                 printf(" ");
         }
-        printf("%02X", bytes[i]);
+        printf("%02X", bytes[i] & 0xFF);
     }
 }
 
