@@ -38,6 +38,18 @@ void hton_dv_entry(struct dv_entry *h, struct dv_entry *n) {
     n->cost = htonl(h->cost);
 }
 
+// Linear search of an array of DV entries
+struct dv_entry *
+dv_find(struct dv_entry *dv, int dv_length, uint16_t dest_port) {
+    int i;
+    for (i=0; i<dv_length; i++) {
+        if (dv[i].dest_port == dest_port) {
+            return &(dv[i]);
+        }
+    }
+    return NULL;
+}
+
 // Singly linked list of information about neighboring nodes
 struct neighbor_list_node {
     uint16_t port;
@@ -69,6 +81,7 @@ struct neighbor_list_node *my_neighbor_list_head = NULL;
 //-----------------------------------------------------------------------------
 
 void broadcast_my_dv(int socket_fd) {
+    printf("Sending DV broadcast\n");
     char message[(DV_CAPACITY+1)*(sizeof(struct dv_entry))];
     // See comment on message format
     message[0] = (char) DV_PACKET;
@@ -92,7 +105,7 @@ void broadcast_my_dv(int socket_fd) {
     }
 }
 
-// Message format:
+// DV message format:
 // 1 byte indicating that this is a DV packet
 // Padding to fill the length of a dv_entry
 // 0 or more DV entries
@@ -102,19 +115,115 @@ void handle_dv_packet(int socket_fd, uint16_t sender_port,
         printf("Message not understood\n");
         return;
     }
-    printf("DV packet from port %u:\n", sender_port);
-    unsigned int i;
-    for (i=sizeof(struct dv_entry); i < bytes_received; i+=sizeof(struct dv_entry)) {
-        struct dv_entry e;
-        ntoh_dv_entry((struct dv_entry *)(buffer+i), &e);
-        printf("Entry: Dest port %u first hop port %u cost %u\n",
-                e.dest_port, e.first_hop_port, e.cost);
+    printf("Received DV packet from port %u:\n", sender_port);
+
+    struct neighbor_list_node *sender =
+            neighbor_list_find(my_neighbor_list_head, sender_port);
+    if (sender == NULL) {
+        // Not necessarily the right thing to do
+        printf("Warning: Sender is not a known neighbor; ignoring its message\n");
+        return;
     }
 
-    // TODO: Use Bellman-Ford to update my_dv
+    int received_dv_length = (bytes_received / sizeof(struct dv_entry)) - 1;
+    if (received_dv_length > DV_CAPACITY) {
+        printf("Received DV has %d entries, which exceeds the capacity of %d\n",
+                received_dv_length, DV_CAPACITY);
+        return;
+    }
 
-    // TODO: Only broadcast if my_dv changed
-    broadcast_my_dv(socket_fd);
+    struct dv_entry *raw_received_dv = ((struct dv_entry *) buffer) + 1;
+    int i;
+    for (i=0; i<received_dv_length; i++) {
+        ntoh_dv_entry(&(raw_received_dv[i]), &(sender->dv[i]));
+    }
+    sender->dv_length = received_dv_length;
+
+    for (i=0; i<received_dv_length; i++) {
+        printf("Entry: Dest port %u first hop port %u cost %u\n",
+                sender->dv[i].dest_port, sender->dv[i].first_hop_port,
+                sender->dv[i].cost);
+    }
+
+    int change_count = 0;
+
+    // The Bellman-Ford part operates in two parts:
+    // First, look for all entries in the current DV which have their first hop
+    //  designated as the sender. If the DV received from the sender causes
+    //  that cost to *increase*, then we have to look at the DVs from all the
+    //  neighbors to see who now gives the lowest cost (or if the target is now
+    //  unreachable altogether).
+    i = 0;
+    while(i<my_dv_length) {
+        if (my_dv[i].first_hop_port == sender_port) {
+            struct dv_entry *senders_entry =
+                    dv_find(sender->dv, sender->dv_length, my_dv[i].dest_port);
+            if (senders_entry==NULL ||
+                    sender->cost + senders_entry->cost > my_dv[i].cost) {
+                uint32_t min_cost = UINT32_MAX;
+                uint16_t best_first_hop_port;
+                int is_reachable = 0;
+                struct neighbor_list_node *neighbor;
+                for (neighbor = my_neighbor_list_head; neighbor != NULL;
+                        neighbor = neighbor->next) {
+                    struct dv_entry *neighbors_entry = dv_find(neighbor->dv,
+                            neighbor->dv_length, my_dv[i].dest_port);
+                    if (neighbors_entry!=NULL &&
+                            neighbors_entry->cost + neighbor->cost < min_cost) {
+                        min_cost = neighbors_entry->cost + neighbor->cost;
+                        best_first_hop_port = neighbor->port;
+                        is_reachable = 1;
+                    }
+                }
+                if (is_reachable) {
+                    my_dv[i].first_hop_port = best_first_hop_port;
+                    my_dv[i].cost = min_cost;
+                    change_count++;
+                    i++;
+                } else {
+                    // The target is now unreachable, so delete its entry from
+                    //  my_dv. We'll do this by moving the last entry into the
+                    //  deleted entry's slot.
+                    my_dv[i] = my_dv[my_dv_length-1];
+                    my_dv_length--;
+                    change_count++;
+                    // i remains unchanged
+                }
+            } else {
+                i++;
+            }
+        } else {
+            i++;
+        }
+    }
+    // Second, we do the standard Bellman-Ford: If the cost to go through the
+    //  sender is now better than the old cost, then update the DV entry.
+    for (i=0; i < sender->dv_length; i++) {
+        uint32_t dest_port = sender->dv[i].dest_port;
+        struct dv_entry *e = dv_find(my_dv, my_dv_length, dest_port);
+        if (e == NULL) {
+            if (my_dv_length >= DV_CAPACITY) {
+                // Not necessarily the right thing to do
+                printf("Warning: DV is full, new entry is discarded\n");
+            } else {
+                my_dv[my_dv_length].dest_port = dest_port;
+                my_dv[my_dv_length].first_hop_port = sender_port;
+                my_dv[my_dv_length].cost = sender->cost + sender->dv[i].cost;
+                my_dv_length++;
+                change_count++;
+            }
+        } else if (sender->cost + sender->dv[i].cost < e->cost) {
+            e->first_hop_port = sender_port;
+            e->cost = sender->cost + sender->dv[i].cost;
+            change_count++;
+        }
+    }
+
+    if (change_count > 0) {
+        broadcast_my_dv(socket_fd);
+    } else {
+        printf("DV did not change\n");
+    }
 }
 
 void print_hexadecimal(char *bytes, int length) {
@@ -192,7 +301,11 @@ new_neighbor_list_node(uint16_t port, uint16_t cost,
     }
     n->port = port;
     n->cost = cost;
-    n->dv = NULL;
+    n->dv = malloc(DV_CAPACITY * sizeof(struct dv_entry));
+    if (n->dv == NULL) {
+        fprintf(stderr, "Error: Memory allocation failed\n");
+        exit(1);
+    }
     n->dv_length = 0;
     n->next = next;
     return n;
@@ -356,6 +469,7 @@ int main(int argc, char **argv) {
         exit(1);
     }
 
+    broadcast_my_dv(socket_fd);
     while (1) {
         server_loop(socket_fd);
     }
