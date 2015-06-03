@@ -86,6 +86,18 @@ int my_socket_fd; // Needs to be global for sig handler
 FILE *log_file;
 //-----------------------------------------------------------------------------
 
+void send_message(int socket_fd, char *message, size_t message_length,
+        uint16_t dest_port) {
+    struct sockaddr_in dest_addr;
+    dest_addr.sin_family = AF_INET;
+    dest_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK); // 127.0.0.1
+    dest_addr.sin_port = htons(dest_port);
+    if (sendto(socket_fd, message, message_length,
+            0, (struct sockaddr *) &dest_addr, sizeof dest_addr) < 0) {
+        perror("Local error trying to send packet");
+    }
+}
+
 void print_my_dv() {
     fprintf(stdout, "Entries in my DV:\n");
     fprintf(log_file, "Entries in my DV:\n");
@@ -114,15 +126,8 @@ void broadcast_my_dv(int socket_fd) {
 
     struct neighbor_list_node *node = my_neighbor_list_head;
     for (; node!=NULL; node = node->next) {
-        struct sockaddr_in dest_addr;
-        dest_addr.sin_family = AF_INET;
-        dest_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK); // 127.0.0.1
-        dest_addr.sin_port = htons(node->port);
-        if (sendto(socket_fd, message,
-                (my_dv_length+1)*(sizeof(struct dv_entry)),
-                0, (struct sockaddr *) &dest_addr, sizeof dest_addr) < 0) {
-            perror("Local error trying to send packet");
-        }
+        send_message(socket_fd, message,
+                (my_dv_length+1)*(sizeof(struct dv_entry)), node->port);
     }
 }
 
@@ -271,19 +276,11 @@ void handle_kill_signal(int sig) {
     // message consists of KILLED_PACKET, padded to length of single dv_entry
 
     printf("Sending Killed broadcast\n");
-    char message[(DV_CAPACITY+1)];
-    message[0] = (char) KILLED_PACKET;
+    char message = KILLED_PACKET;
 
     struct neighbor_list_node *node = my_neighbor_list_head;
     for (; node!=NULL; node = node->next) {
-        struct sockaddr_in dest_addr;
-        dest_addr.sin_family = AF_INET;
-        dest_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK); // 127.0.0.1
-        dest_addr.sin_port = htons(node->port);
-        if (sendto(my_socket_fd, message, sizeof(struct dv_entry),
-                0, (struct sockaddr *) &dest_addr, sizeof dest_addr) < 0) {
-            perror("Local error trying to send killed packet");
-        }
+        send_message(my_socket_fd, &message, 1, node->port);
     }
 
     signal(sig, SIG_DFL); // Restore default behavior
@@ -537,6 +534,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Error: Failed to open log file %s\n", log_file_name);
         exit(1);
     }
+    fprintf(log_file, "This is router %c on port %u\n", my_label, my_port);
 
     struct neighbor_list_node *node = my_neighbor_list_head;
     fprintf(stdout, "My neighbors are:\n");
