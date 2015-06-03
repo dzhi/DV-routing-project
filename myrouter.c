@@ -275,7 +275,8 @@ void initialize_neighbors(const char *file_name) {
 
         if (src == my_label) {
             current = new_neighbor_list_node(port, cost, next);
-            my_dv[num_neighbors].port = port;
+            my_dv[num_neighbors].dest_port = port;
+            my_dv[num_neighbors].first_hop_port = port;
             my_dv[num_neighbors].cost = cost;
             num_neighbors++;
 
@@ -322,18 +323,20 @@ int main(int argc, char **argv) {
 
     // TODO print intialized values
     struct neighbor_list_node *node = my_neighbor_list_head;
-    fprintf(stdout, "My neighbors are:\n")
+    fprintf(stdout, "My neighbors are:\n");
     for (; node!=NULL; node = node->next) {
-        fprintf(stdout, "Port %u Cost %u\n", node.entry[0]);
+        fprintf(stdout, "Port %u Cost %u\n", node->port, node->cost);
     }
 
     fprintf(stdout, "my label is %c\n", my_label);
-    fprintf(stdout, "Entries in DV table\n");
+    fprintf(stdout, "Entries in DV table:\n");
 
-    for (int i = 0; i < my_dv_length; i++) {
-        fprintf(stdout, "Port %u Cost %u\n", my_dv[i].port, my_dv[i].cost);
+    int i;
+    for (i = 0; i < my_dv_length; i++) {
+        fprintf(stdout, "Dest port %u first hop port %u cost %u\n",
+                my_dv[i].dest_port, my_dv[i].first_hop_port, my_dv[i].cost);
     }
-    fprintf(stdout, "\n\n")
+    fprintf(stdout, "\n\n");
 
     // AF_INET ---> IPv4
     // SOCK_DGRAM ---> UDP
