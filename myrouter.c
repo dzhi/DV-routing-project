@@ -398,6 +398,7 @@ void server_loop(int socket_fd) {
         case INITIAL_DV_PACKET:
             handle_dv_packet(sender_port, buffer, bytes_received);
             send_my_dv(socket_fd, sender_port);
+        break;
         default:
             printf("Message not understood\n");
     }
