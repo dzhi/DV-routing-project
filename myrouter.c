@@ -118,7 +118,7 @@ void handle_dv_packet(int socket_fd, uint16_t sender_port,
         printf("Message not understood\n");
         return;
     }
-    printf("Received DV packet from port %u:\n", sender_port);
+    printf("DV packet from port %u:\n", sender_port);
 
     struct neighbor_list_node *sender =
             neighbor_list_find(my_neighbor_list_head, sender_port);
@@ -142,7 +142,7 @@ void handle_dv_packet(int socket_fd, uint16_t sender_port,
     }
     sender->dv_length = received_dv_length;
 
-    for (i=0; i<received_dv_length; i++) {
+    for (i=0; i<sender->dv_length; i++) {
         printf("Entry: Dest port %u first hop port %u cost %u\n",
                 sender->dv[i].dest_port, sender->dv[i].first_hop_port,
                 sender->dv[i].cost);
@@ -152,13 +152,14 @@ void handle_dv_packet(int socket_fd, uint16_t sender_port,
 
     // The Bellman-Ford part operates in two parts:
     // First, look for all entries in the current DV which have their first hop
-    //  designated as the sender. If the DV received from the sender causes
-    //  that cost to *increase*, then we have to look at the DVs from all the
-    //  neighbors to see who now gives the lowest cost (or if the target is now
-    //  unreachable altogether).
+    //  designated as the sender (unless the first hop is the sender itself).
+    // If the DV received from the sender causes that cost to *increase*, then
+    //  we have to look at the DVs from all the neighbors to see who now gives
+    //  the lowest cost (or if the target is now unreachable altogether).
     i = 0;
     while(i<my_dv_length) {
-        if (my_dv[i].first_hop_port == sender_port) {
+        if (my_dv[i].first_hop_port == sender_port &&
+                my_dv[i].dest_port != sender_port) {
             struct dv_entry *senders_entry =
                     dv_find(sender->dv, sender->dv_length, my_dv[i].dest_port);
             if (senders_entry==NULL ||
@@ -187,6 +188,8 @@ void handle_dv_packet(int socket_fd, uint16_t sender_port,
                     // The target is now unreachable, so delete its entry from
                     //  my_dv. We'll do this by moving the last entry into the
                     //  deleted entry's slot.
+                    printf("DV update: Deletion: Dest %u no longer reachable\n",
+                            my_dv[i].dest_port);
                     my_dv[i] = my_dv[my_dv_length-1];
                     my_dv_length--;
                     change_count++;
@@ -203,6 +206,9 @@ void handle_dv_packet(int socket_fd, uint16_t sender_port,
     //  sender is now better than the old cost, then update the DV entry.
     for (i=0; i < sender->dv_length; i++) {
         uint32_t dest_port = sender->dv[i].dest_port;
+        if (dest_port == my_port) {
+            continue;
+        }
         struct dv_entry *e = dv_find(my_dv, my_dv_length, dest_port);
         if (e == NULL) {
             if (my_dv_length >= DV_CAPACITY) {
@@ -212,13 +218,20 @@ void handle_dv_packet(int socket_fd, uint16_t sender_port,
                 my_dv[my_dv_length].dest_port = dest_port;
                 my_dv[my_dv_length].first_hop_port = sender_port;
                 my_dv[my_dv_length].cost = sender->cost + sender->dv[i].cost;
+                printf("DV update: New entry: Dest %u first hop %u cost %u\n",
+                        my_dv[my_dv_length].dest_port,
+                        my_dv[my_dv_length].first_hop_port,
+                        my_dv[my_dv_length].cost);
                 my_dv_length++;
                 change_count++;
             }
         } else if (sender->cost + sender->dv[i].cost < e->cost) {
+            printf("DV update: Entry for dest %u changed ", dest_port);
+            printf("from first hop %u cost %u ", e->first_hop_port, e->cost);
             e->first_hop_port = sender_port;
             e->cost = sender->cost + sender->dv[i].cost;
             change_count++;
+            printf("to first hop %u cost %u ", e->first_hop_port, e->cost);
         }
     }
 
