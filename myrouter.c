@@ -6,6 +6,7 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <inttypes.h> // string formatting for uint16_t
+#include <signal.h>
 
 // Size of the buffer for packet payload
 #define BUFFER_SIZE 65536
@@ -19,7 +20,8 @@
 
 enum packet_type {
     DATA_PACKET = 1,
-    DV_PACKET = 2
+    DV_PACKET = 2,
+    KILLED_PACKET = 3
 };
 
 struct dv_entry {
@@ -78,6 +80,7 @@ uint16_t my_port;
 struct dv_entry my_dv[DV_CAPACITY];
 int my_dv_length = 0;
 struct neighbor_list_node *my_neighbor_list_head = NULL;
+int my_socket_fd; // needs to be global for sig handler
 //-----------------------------------------------------------------------------
 
 void broadcast_my_dv(int socket_fd) {
@@ -417,6 +420,38 @@ int str_to_uint16(const char *str, uint16_t *result) {
     return 0;
 }
 
+
+// handle SIGINT, SIGQUIT, SIGTERM by informing neighbors the router is killed
+//TODO the SIGKILL signal (posix) can't be handled/caught
+void handle_kill_signal(int sig) {
+
+    // send dying message to all neighbors
+    // message consists of KILLED_PACKET, padded to length of single dv_entry
+
+    printf("Sending Killed broadcast\n");
+    char message[(DV_CAPACITY+1)];
+    message[0] = (char) KILLED_PACKET;
+
+    struct neighbor_list_node *node = my_neighbor_list_head;
+    for (; node!=NULL; node = node->next) {
+        struct sockaddr_in dest_addr;
+        dest_addr.sin_family = AF_INET;
+        dest_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK); // 127.0.0.1
+        dest_addr.sin_port = htons(node->port);
+        if (sendto(my_socket_fd, message, sizeof(struct dv_entry),
+                0, (struct sockaddr *) &dest_addr, sizeof dest_addr) < 0) {
+            perror("Local error trying to send killed packet");
+        }
+    }
+
+    // let self be killed
+    //exit(0);
+    signal(sig, SIG_DFL); // restore default behavior
+    raise(sig);
+
+    return;
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) {
         fprintf(stderr, "Error: No port number provided\n");
@@ -469,7 +504,15 @@ int main(int argc, char **argv) {
         exit(1);
     }
 
+    my_socket_fd = socket_fd; // set global too
+
     broadcast_my_dv(socket_fd);
+
+    // after this point (initial contact w/ neighbors), should let neighbors know if killed
+    signal(SIGINT, handle_kill_signal);
+    signal(SIGTERM, handle_kill_signal);
+    signal(SIGQUIT, handle_kill_signal);
+
     while (1) {
         server_loop(socket_fd);
     }
