@@ -145,6 +145,44 @@ void broadcast_my_dv(int socket_fd, enum packet_type type) {
     }
 }
 
+// Returns 1 if taking the first hop to sender_port to get to dest_port is
+//  cheaper than the current best way to get to dest_port.
+// Returns 0 if not.
+// Returns a negative number if an error occured.
+int bellman_ford_decrease(uint16_t dest_port, uint16_t sender_port,
+        uint32_t cost_thru_sender) {
+    if (dest_port == my_port) {
+        return 0;
+    }
+    struct dv_entry *e = dv_find(my_dv, my_dv_length, dest_port);
+    if (e == NULL) {
+        if (my_dv_length >= DV_CAPACITY) {
+            // Not necessarily the right thing to do
+            printf("Warning: DV is full, new entry is discarded\n");
+            return -1;
+        } else {
+            my_dv[my_dv_length].dest_port = dest_port;
+            my_dv[my_dv_length].first_hop_port = sender_port;
+            my_dv[my_dv_length].cost = cost_thru_sender;
+            printf("DV update: New entry: Dest %u first hop %u cost %u\n",
+                    my_dv[my_dv_length].dest_port,
+                    my_dv[my_dv_length].first_hop_port,
+                    my_dv[my_dv_length].cost);
+            my_dv_length++;
+            return 1;
+        }
+    } else if (cost_thru_sender < e->cost) {
+        printf("DV update: Entry for dest %u changed ", dest_port);
+        printf("    from first hop %u cost %u ", e->first_hop_port, e->cost);
+        e->first_hop_port = sender_port;
+        e->cost = cost_thru_sender;
+        printf("    to first hop %u cost %u ", e->first_hop_port, e->cost);
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
 // DV message format:
 // 1 byte indicating that this is a DV packet
 // Padding to fill the length of a dv_entry
@@ -188,7 +226,7 @@ int handle_dv_packet(uint16_t sender_port, char *buffer,
     }
 
     int change_count = 0;
-
+    
     // The Bellman-Ford part operates in two parts:
     // First, look for all entries in the current DV which have their first hop
     //  designated as the sender (unless the first hop is the sender itself).
@@ -244,34 +282,17 @@ int handle_dv_packet(uint16_t sender_port, char *buffer,
     // Second, we do the standard Bellman-Ford: If the cost to go through the
     //  sender is now better than the old cost, then update the DV entry.
     for (i=0; i < sender->dv_length; i++) {
-        uint32_t dest_port = sender->dv[i].dest_port;
-        if (dest_port == my_port) {
-            continue;
-        }
-        struct dv_entry *e = dv_find(my_dv, my_dv_length, dest_port);
-        if (e == NULL) {
-            if (my_dv_length >= DV_CAPACITY) {
-                // Not necessarily the right thing to do
-                printf("Warning: DV is full, new entry is discarded\n");
-            } else {
-                my_dv[my_dv_length].dest_port = dest_port;
-                my_dv[my_dv_length].first_hop_port = sender_port;
-                my_dv[my_dv_length].cost = sender->cost + sender->dv[i].cost;
-                printf("DV update: New entry: Dest %u first hop %u cost %u\n",
-                        my_dv[my_dv_length].dest_port,
-                        my_dv[my_dv_length].first_hop_port,
-                        my_dv[my_dv_length].cost);
-                my_dv_length++;
-                change_count++;
-            }
-        } else if (sender->cost + sender->dv[i].cost < e->cost) {
-            printf("DV update: Entry for dest %u changed ", dest_port);
-            printf("    from first hop %u cost %u ", e->first_hop_port, e->cost);
-            e->first_hop_port = sender_port;
-            e->cost = sender->cost + sender->dv[i].cost;
+        uint16_t dest_port = sender->dv[i].dest_port;
+        uint32_t cost_thru_sender = sender->cost + sender->dv[i].cost;
+        if(bellman_ford_decrease(dest_port, sender_port,
+                cost_thru_sender) > 0) {
             change_count++;
-            printf("    to first hop %u cost %u ", e->first_hop_port, e->cost);
         }
+    }
+    // Finally, if my DV doesn't have an entry for the sender itself (because
+    //  previously the sender was not alive), add an entry.
+    if (bellman_ford_decrease(sender_port, sender_port, sender->cost) > 0) {
+        change_count++;        
     }
 
     if (change_count > 0) {
@@ -396,12 +417,16 @@ void server_loop(int socket_fd) {
             handle_killed_packet(sender_port);
         break;
         case INITIAL_DV_PACKET:
-            handle_dv_packet(sender_port, buffer, bytes_received);
-            send_my_dv(socket_fd, sender_port);
+            if (handle_dv_packet(sender_port, buffer, bytes_received) > 0) {
+                broadcast_my_dv(socket_fd, DV_PACKET);
+            } else {
+                send_my_dv(socket_fd, sender_port);
+            }
         break;
         default:
             printf("Message not understood\n");
     }
+    printf("\n");
 }
 
 struct neighbor_list_node *
@@ -462,11 +487,9 @@ void initialize_neighbors(const char *file_name) {
 
     struct neighbor_list_node *next = NULL; // tail node added first, has NULL next
     struct neighbor_list_node* current = NULL;
-    int num_neighbors = 0;
 
     FILE* f = fopen(file_name, "rt");
     char line[MAX_LINE_LEN];
-
     while(fgets(line, MAX_LINE_LEN, f) != NULL){
         char src;
         char dest;
@@ -483,21 +506,12 @@ void initialize_neighbors(const char *file_name) {
 
         if (src == my_label) {
             current = new_neighbor_list_node(port, cost, next);
-            my_dv[num_neighbors].dest_port = port;
-            my_dv[num_neighbors].first_hop_port = port;
-            my_dv[num_neighbors].cost = cost;
-            num_neighbors++;
-
-
             next = current;
         }
     }
 
     fclose(f);
     my_neighbor_list_head = current;
-    my_dv_length = num_neighbors;
-
-
     return;
 }
 
@@ -568,6 +582,7 @@ int main(int argc, char **argv) {
 
     print_my_dv();
     broadcast_my_dv(socket_fd, INITIAL_DV_PACKET);
+    printf("\n");
 
     // After this point (initial contact w/ neighbors), should let neighbors
     //  know if killed

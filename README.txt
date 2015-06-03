@@ -15,7 +15,7 @@ TODO:
 (TODO) Slides
 (TODO) Test the demo
 
-Known bugs/issues:
+(Done I think) Known bugs/issues:
 - If you kill a router and restart it, doesn't get re-added to my_dv.
 	(not sure if necessary)
 - Each router assumes all of its neighbors in file are initially live.
