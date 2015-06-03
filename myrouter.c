@@ -23,7 +23,8 @@
 enum packet_type {
     DATA_PACKET = 1,
     DV_PACKET = 2,
-    KILLED_PACKET = 3
+    KILLED_PACKET = 3,
+    INITIAL_DV_PACKET = 4
 };
 
 struct dv_entry {
@@ -113,16 +114,29 @@ void print_my_dv() {
     fflush(log_file);
 }
 
-void broadcast_my_dv(int socket_fd) {
-    printf("Sending DV broadcast\n");
-    char message[(DV_CAPACITY+1)*(sizeof(struct dv_entry))];
+void create_dv_message(char *buffer, enum packet_type type) {
     // See comment on message format
-    message[0] = (char) DV_PACKET;
-    struct dv_entry *dv = ((struct dv_entry *) message)+1;
+    buffer[0] = (char) type;
+    struct dv_entry *dv = ((struct dv_entry *) buffer)+1;
     int i;
     for (i=0; i<my_dv_length; i++) {
         hton_dv_entry(&(my_dv[i]), &(dv[i]));
     }
+}
+
+void send_my_dv(int socket_fd, uint16_t dest_port) {
+    printf("Sending DV to port %u\n", dest_port);
+    char message[(DV_CAPACITY+1)*(sizeof(struct dv_entry))];
+    create_dv_message(message, DV_PACKET);
+
+    send_message(socket_fd, message,
+            (my_dv_length+1)*(sizeof(struct dv_entry)), dest_port);
+}
+
+void broadcast_my_dv(int socket_fd, enum packet_type type) {
+    printf("Sending DV broadcast\n");
+    char message[(DV_CAPACITY+1)*(sizeof(struct dv_entry))];
+    create_dv_message(message, type);
 
     struct neighbor_list_node *node = my_neighbor_list_head;
     for (; node!=NULL; node = node->next) {
@@ -135,11 +149,13 @@ void broadcast_my_dv(int socket_fd) {
 // 1 byte indicating that this is a DV packet
 // Padding to fill the length of a dv_entry
 // 0 or more DV entries
-void handle_dv_packet(int socket_fd, uint16_t sender_port,
-        char *buffer, ssize_t bytes_received) {
+//
+// Returns the number of changes made to the DV, or a negative number if error
+int handle_dv_packet(uint16_t sender_port, char *buffer,
+        ssize_t bytes_received) {
     if (bytes_received % sizeof(struct dv_entry) != 0) {
         printf("Message not understood\n");
-        return;
+        return -1;
     }
     printf("DV packet from port %u:\n", sender_port);
 
@@ -148,14 +164,14 @@ void handle_dv_packet(int socket_fd, uint16_t sender_port,
     if (sender == NULL) {
         // Not necessarily the right thing to do
         printf("Warning: Sender is not a known neighbor; ignoring its message\n");
-        return;
+        return -1;
     }
 
     int received_dv_length = (bytes_received / sizeof(struct dv_entry)) - 1;
     if (received_dv_length > DV_CAPACITY) {
         printf("Received DV has %d entries, which exceeds the capacity of %d\n",
                 received_dv_length, DV_CAPACITY);
-        return;
+        return -1;
     }
 
     struct dv_entry *raw_received_dv = ((struct dv_entry *) buffer) + 1;
@@ -260,12 +276,11 @@ void handle_dv_packet(int socket_fd, uint16_t sender_port,
 
     if (change_count > 0) {
         print_my_dv();
-        broadcast_my_dv(socket_fd);
     } else {
         printf("DV did not change\n");
     }
+    return change_count;
 }
-
 
 // handle SIGINT, SIGQUIT, SIGTERM by informing neighbors the router is killed
 //TODO the SIGKILL signal (posix) can't be handled/caught
@@ -373,11 +388,16 @@ void server_loop(int socket_fd) {
             printf("Data packet received (behavior not yet implemented)\n");
         break;
         case DV_PACKET:
-            handle_dv_packet(socket_fd, sender_port, buffer, bytes_received);
+            if (handle_dv_packet(sender_port, buffer, bytes_received) > 0) {
+                broadcast_my_dv(socket_fd, DV_PACKET);
+            }
         break;
         case KILLED_PACKET:
             handle_killed_packet(sender_port);
         break;
+        case INITIAL_DV_PACKET:
+            handle_dv_packet(sender_port, buffer, bytes_received);
+            send_my_dv(socket_fd, sender_port);
         default:
             printf("Message not understood\n");
     }
@@ -565,7 +585,7 @@ int main(int argc, char **argv) {
     my_socket_fd = socket_fd; // set global too
 
     print_my_dv();
-    broadcast_my_dv(socket_fd);
+    broadcast_my_dv(socket_fd, INITIAL_DV_PACKET);
 
     // After this point (initial contact w/ neighbors), should let neighbors
     //  know if killed
