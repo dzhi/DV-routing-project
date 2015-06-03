@@ -1,3 +1,18 @@
+TODO:
+(Done) Verify that the initialization worked
+Actual DV algorithm
+Write route tables to log file
+0.0.0.0 bug
+Actually route a file
+    and show the route that it took
+Be able to handle killing a router
+
+Report
+Slides
+Test the demo
+
+-------------------------------------------------------------------------------
+
 Current state of affairs:
 
 Run

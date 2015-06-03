@@ -328,7 +328,7 @@ int main(int argc, char **argv) {
         fprintf(stdout, "Port %u Cost %u\n", node->port, node->cost);
     }
 
-    fprintf(stdout, "my label is %c\n", my_label);
+    fprintf(stdout, "My label is %c\n", my_label);
     fprintf(stdout, "Entries in DV table:\n");
 
     int i;
