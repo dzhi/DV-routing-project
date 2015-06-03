@@ -23,22 +23,25 @@ enum packet_type {
 };
 
 struct dv_entry {
-    uint16_t port;
-    uint16_t cost;
+    uint16_t dest_port;
+    uint16_t first_hop_port;
+    uint32_t cost;
 };
 void ntoh_dv_entry(struct dv_entry *n, struct dv_entry *h) {
-    h->port = ntohs(n->port);
-    h->cost = ntohs(n->cost);
+    h->dest_port = ntohs(n->dest_port);
+    h->first_hop_port = ntohs(n->first_hop_port);
+    h->cost = ntohl(n->cost);
 }
 void hton_dv_entry(struct dv_entry *h, struct dv_entry *n) {
-    n->port = htons(h->port);
-    n->cost = htons(h->cost);
+    n->dest_port = htons(h->dest_port);
+    n->first_hop_port = htons(h->first_hop_port);
+    n->cost = htonl(h->cost);
 }
 
 // Singly linked list of information about neighboring nodes
 struct neighbor_list_node {
-    // Port number of this neighbor, and the cost of the link to this neighbor
-    struct dv_entry entry;
+    uint16_t port;
+    uint32_t cost;
     struct dv_entry *dv; // The neighbor node's DV (an array of DV entries)
     int dv_length; // Number of entries in the neighbor node's DV
     struct neighbor_list_node *next;
@@ -48,7 +51,7 @@ struct neighbor_list_node *
 neighbor_list_find(struct neighbor_list_node *list_head, uint16_t port) {
     struct neighbor_list_node *node = list_head;
     for (; node!=NULL; node = node->next) {
-        if (node->entry.port == port) {
+        if (node->port == port) {
             return node;
         }
     }
@@ -80,7 +83,7 @@ void broadcast_my_dv(int socket_fd) {
         struct sockaddr_in dest_addr;
         dest_addr.sin_family = AF_INET;
         dest_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK); // 127.0.0.1
-        dest_addr.sin_port = htons(node->entry.port);
+        dest_addr.sin_port = htons(node->port);
         if (sendto(socket_fd, message,
                 (my_dv_length+1)*(sizeof(struct dv_entry)),
                 0, (struct sockaddr *) &dest_addr, sizeof dest_addr) < 0) {
@@ -104,9 +107,12 @@ void handle_dv_packet(int socket_fd, uint16_t sender_port,
     for (i=sizeof(struct dv_entry); i < bytes_received; i+=sizeof(struct dv_entry)) {
         struct dv_entry e;
         ntoh_dv_entry((struct dv_entry *)(buffer+i), &e);
-        printf("Entry: Port %u cost %u\n", e.port, e.cost);
+        printf("Entry: Dest port %u first hop port %u cost %u\n",
+                e.dest_port, e.first_hop_port, e.cost);
     }
+
     // TODO: Use Bellman-Ford to update my_dv
+
     // TODO: Only broadcast if my_dv changed
     broadcast_my_dv(socket_fd);
 }
@@ -184,8 +190,8 @@ new_neighbor_list_node(uint16_t port, uint16_t cost,
         fprintf(stderr, "Error: Memory allocation failed\n");
         exit(1);
     }
-    n->entry.port = port;
-    n->entry.cost = cost;
+    n->port = port;
+    n->cost = cost;
     n->dv = NULL;
     n->dv_length = 0;
     n->next = next;
@@ -199,16 +205,16 @@ void initialize_neighbors_old() {
         struct neighbor_list_node *b = new_neighbor_list_node(10001, 3, NULL);
         struct neighbor_list_node *e = new_neighbor_list_node(10005, 1, b);
         my_neighbor_list_head = e;
-        my_dv[0].port = 10001;
+        my_dv[0].dest_port = 10001;
+        my_dv[0].first_hop_port = 10001;
         my_dv[0].cost = 3;
-        my_dv[1].port = 10005;
+        my_dv[1].dest_port = 10005;
+        my_dv[1].first_hop_port = 10005;
         my_dv[1].cost = 1;
         my_dv_length = 2;
     }
     // TODO: More data missing
 }
-
-
 
 void find_label(const char *file_name) {
     // find first edge where dest port matches this router's port
@@ -302,11 +308,10 @@ int main(int argc, char **argv) {
         exit(1);
     }
 
-
-    //initialize_neighbors();
+    // initialize_neighbors_old();
     // TODO give user option to specify file
     find_label("sample_topology.txt"); // find node's own name
-    initialize_neighbors("sample_topology.txt"); 
+    initialize_neighbors("sample_topology.txt");
 
 
     // AF_INET ---> IPv4
