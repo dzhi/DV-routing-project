@@ -302,6 +302,8 @@ void server_loop(int socket_fd) {
         case DV_PACKET:
             handle_dv_packet(socket_fd, sender_port, buffer, bytes_received);
         break;
+        case KILLED_PACKET:
+            handle_killed_packet(sender_port);
         default:
             printf("Message not understood\n");
     }
@@ -464,6 +466,53 @@ void handle_kill_signal(int sig) {
 
     return;
 }
+
+// handle if neighbor is killed
+void handle_killed_packet(uint16_t sender_port) {
+    // note: doesn't matter what rest of message is, just that neighbor was killed
+    printf("Killed_packet from port %u:\n", sender_port);
+
+    struct neighbor_list_node *sender =
+            neighbor_list_find(my_neighbor_list_head, sender_port);
+    if (sender == NULL) {
+        // Not necessarily the right thing to do
+        printf("Warning: Sender is not a known neighbor; ignoring its message\n");
+        return;
+    }
+
+    // Dead neighbor is now unreachable, so delete its entry from
+    //  my_dv. We'll do this by moving the last entry into the
+    //  deleted entry's slot.
+
+    // Find what delete in my_dv
+    struct dv_entry *to_delete = dv_find(my_dv, my_dv_length, sender->port);
+    if (to_delete == NULL) {
+        printf("Warning: Sender not found in my_dv, may have already been removed\n");
+        return;
+    }
+
+    printf("TODO before deletion\n");
+    for (int i = 0; i < my_dv_length; i++){
+        printf("%u ", my_dv[i].dest_port);
+    }
+    printf("\n\n");
+
+    printf("DV update: Deletion: Dest %u no longer reachable (killed)\n",
+            to_delete->dest_port);
+    to_delete = &my_dv[my_dv_length-1]; // point to last entry instead
+    my_dv_length--;
+
+    
+    printf("TODO after deletion\n");
+    for (int i = 0; i < my_dv_length; i++){
+        printf("%u ", my_dv[i].dest_port);
+    }
+    printf("\n\n");
+
+
+    return;
+}
+
 
 int main(int argc, char **argv) {
     if (argc < 2) {
