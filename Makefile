@@ -15,4 +15,4 @@ myrouter: $(MYROUTER_OBJECTS)
 	$(CC) $(CFLAGS) -o $@ $(MYROUTER_OBJECTS)
 
 clean:
-	rm -f *.o *.tmp myrouter
+	rm -f *.o *.tmp routing-output*.txt myrouter

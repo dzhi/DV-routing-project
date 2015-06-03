@@ -1,11 +1,11 @@
 #include <stdio.h>
+#include <string.h>
 #include <stdlib.h>
-#include <stdint.h>
 #include <errno.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
-#include <inttypes.h> // string formatting for uint16_t
+#include <inttypes.h>
 #include <signal.h>
 
 // Size of the buffer for packet payload
@@ -17,6 +17,8 @@
 
 // Max line size in topology file (for fgets)
 #define MAX_LINE_LEN 80
+
+#define LOG_FILE_NAME_LEN 256
 
 enum packet_type {
     DATA_PACKET = 1,
@@ -81,7 +83,23 @@ struct dv_entry my_dv[DV_CAPACITY];
 int my_dv_length = 0;
 struct neighbor_list_node *my_neighbor_list_head = NULL;
 int my_socket_fd; // Needs to be global for sig handler
+FILE *log_file;
 //-----------------------------------------------------------------------------
+
+void print_my_dv() {
+    fprintf(stdout, "Entries in my DV:\n");
+    fprintf(log_file, "Entries in my DV:\n");
+
+    int i;
+    for (i = 0; i < my_dv_length; i++) {
+        fprintf(stdout, "Dest port %u first hop port %u cost %u\n",
+                my_dv[i].dest_port, my_dv[i].first_hop_port, my_dv[i].cost);
+        fprintf(log_file, "Dest port %u first hop port %u cost %u\n",
+                my_dv[i].dest_port, my_dv[i].first_hop_port, my_dv[i].cost);
+    }
+    fprintf(log_file, "\n");
+    fflush(log_file);
+}
 
 void broadcast_my_dv(int socket_fd) {
     printf("Sending DV broadcast\n");
@@ -227,15 +245,16 @@ void handle_dv_packet(int socket_fd, uint16_t sender_port,
             }
         } else if (sender->cost + sender->dv[i].cost < e->cost) {
             printf("DV update: Entry for dest %u changed ", dest_port);
-            printf("from first hop %u cost %u ", e->first_hop_port, e->cost);
+            printf("    from first hop %u cost %u ", e->first_hop_port, e->cost);
             e->first_hop_port = sender_port;
             e->cost = sender->cost + sender->dv[i].cost;
             change_count++;
-            printf("to first hop %u cost %u ", e->first_hop_port, e->cost);
+            printf("    to first hop %u cost %u ", e->first_hop_port, e->cost);
         }
     }
 
     if (change_count > 0) {
+        print_my_dv();
         broadcast_my_dv(socket_fd);
     } else {
         printf("DV did not change\n");
@@ -510,21 +529,22 @@ int main(int argc, char **argv) {
     find_label("sample_topology.txt"); // Find this node's own name
     initialize_neighbors("sample_topology.txt");
 
+    char log_file_name[LOG_FILE_NAME_LEN];
+    strcpy(log_file_name, "routing-output_.txt");
+    log_file_name[14] = my_label;
+    log_file = fopen(log_file_name, "w");
+    if (log_file == NULL) {
+        fprintf(stderr, "Error: Failed to open log file %s\n", log_file_name);
+        exit(1);
+    }
+
     struct neighbor_list_node *node = my_neighbor_list_head;
     fprintf(stdout, "My neighbors are:\n");
     for (; node!=NULL; node = node->next) {
         fprintf(stdout, "Port %u Cost %u\n", node->port, node->cost);
     }
 
-    fprintf(stdout, "My label is %c\n", my_label);
-    fprintf(stdout, "Entries in DV table:\n");
-
-    int i;
-    for (i = 0; i < my_dv_length; i++) {
-        fprintf(stdout, "Dest port %u first hop port %u cost %u\n",
-                my_dv[i].dest_port, my_dv[i].first_hop_port, my_dv[i].cost);
-    }
-    fprintf(stdout, "\n\n");
+    fprintf(stdout, "My label is %c\n\n", my_label);
 
     // AF_INET ---> IPv4
     // SOCK_DGRAM ---> UDP
@@ -546,6 +566,7 @@ int main(int argc, char **argv) {
 
     my_socket_fd = socket_fd; // set global too
 
+    print_my_dv();
     broadcast_my_dv(socket_fd);
 
     // After this point (initial contact w/ neighbors), should let neighbors
