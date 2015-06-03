@@ -423,24 +423,6 @@ new_neighbor_list_node(uint16_t port, uint16_t cost,
     return n;
 }
 
-// TODO: Hardcoded for now
-// Definitely needs refactoring
-void initialize_neighbors_old() {
-    if (my_port == 10000) {
-        struct neighbor_list_node *b = new_neighbor_list_node(10001, 3, NULL);
-        struct neighbor_list_node *e = new_neighbor_list_node(10005, 1, b);
-        my_neighbor_list_head = e;
-        my_dv[0].dest_port = 10001;
-        my_dv[0].first_hop_port = 10001;
-        my_dv[0].cost = 3;
-        my_dv[1].dest_port = 10005;
-        my_dv[1].first_hop_port = 10005;
-        my_dv[1].cost = 1;
-        my_dv_length = 2;
-    }
-    // TODO: More data missing
-}
-
 void find_label(const char *file_name) {
     // find first edge where dest port matches this router's port
     // the dest label is then the label corresponding to this port
@@ -541,7 +523,6 @@ int main(int argc, char **argv) {
         exit(1);
     }
 
-    // initialize_neighbors_old();
     // TODO give user option to specify file
     find_label("sample_topology.txt"); // Find this node's own name
     initialize_neighbors("sample_topology.txt");
