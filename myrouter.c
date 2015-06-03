@@ -19,7 +19,12 @@
 
 enum packet_type {
     DATA_PACKET = 1,
-    DV_PACKET = 2
+    // The difference between DV_PACKET and INITIAL_DV_PACKET:
+    //  An INITIAL_DV_PACKET is only sent by a router when it first starts up;
+    //  all recipients reply with their DV (ordinarily, the recipients only
+    //  send out their DV when their DV changes)
+    DV_PACKET = 2,
+    INITIAL_DV_PACKET = 3
 };
 
 struct dv_entry {
@@ -80,16 +85,46 @@ int my_dv_length = 0;
 struct neighbor_list_node *my_neighbor_list_head = NULL;
 //-----------------------------------------------------------------------------
 
-void broadcast_my_dv(int socket_fd) {
-    printf("Sending DV broadcast\n");
-    char message[(DV_CAPACITY+1)*(sizeof(struct dv_entry))];
+void print_my_dv() {
+    fprintf(stdout, "Entries in my DV:\n");
+
+    int i;
+    for (i = 0; i < my_dv_length; i++) {
+        fprintf(stdout, "Dest port %u first hop port %u cost %u\n",
+                my_dv[i].dest_port, my_dv[i].first_hop_port, my_dv[i].cost);
+    }
+}
+
+void create_dv_message(char *buffer, enum packet_type type) {
     // See comment on message format
-    message[0] = (char) DV_PACKET;
-    struct dv_entry *dv = ((struct dv_entry *) message)+1;
+    buffer[0] = (char) type;
+    struct dv_entry *dv = ((struct dv_entry *) buffer)+1;
     int i;
     for (i=0; i<my_dv_length; i++) {
         hton_dv_entry(&(my_dv[i]), &(dv[i]));
     }
+}
+
+void send_my_dv(int socket_fd, uint16_t sender_port) {
+    printf("Sending DV to port %u\n", sender_port);
+    char message[(DV_CAPACITY+1)*(sizeof(struct dv_entry))];
+    create_dv_message(message, DV_PACKET);
+
+    struct sockaddr_in dest_addr;
+    dest_addr.sin_family = AF_INET;
+    dest_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK); // 127.0.0.1
+    dest_addr.sin_port = htons(sender_port);
+    if (sendto(socket_fd, message,
+            (my_dv_length+1)*(sizeof(struct dv_entry)),
+            0, (struct sockaddr *) &dest_addr, sizeof dest_addr) < 0) {
+        perror("Local error trying to send packet");
+    }
+}
+
+void broadcast_my_dv(int socket_fd, enum packet_type type) {
+    printf("Sending DV broadcast\n");
+    char message[(DV_CAPACITY+1)*(sizeof(struct dv_entry))];
+    create_dv_message(message, type);
 
     struct neighbor_list_node *node = my_neighbor_list_head;
     for (; node!=NULL; node = node->next) {
@@ -109,11 +144,13 @@ void broadcast_my_dv(int socket_fd) {
 // 1 byte indicating that this is a DV packet
 // Padding to fill the length of a dv_entry
 // 0 or more DV entries
-void handle_dv_packet(int socket_fd, uint16_t sender_port,
-        char *buffer, ssize_t bytes_received) {
+//
+// Returns the number of changes made to the DV, or a negative number if error
+int handle_dv_packet(
+        uint16_t sender_port, char *buffer, ssize_t bytes_received) {
     if (bytes_received % sizeof(struct dv_entry) != 0) {
         printf("Message not understood\n");
-        return;
+        return -1;
     }
     printf("DV packet from port %u:\n", sender_port);
 
@@ -122,14 +159,14 @@ void handle_dv_packet(int socket_fd, uint16_t sender_port,
     if (sender == NULL) {
         // Not necessarily the right thing to do
         printf("Warning: Sender is not a known neighbor; ignoring its message\n");
-        return;
+        return -1;
     }
 
     int received_dv_length = (bytes_received / sizeof(struct dv_entry)) - 1;
     if (received_dv_length > DV_CAPACITY) {
         printf("Received DV has %d entries, which exceeds the capacity of %d\n",
                 received_dv_length, DV_CAPACITY);
-        return;
+        return -1;
     }
 
     struct dv_entry *raw_received_dv = ((struct dv_entry *) buffer) + 1;
@@ -223,20 +260,21 @@ void handle_dv_packet(int socket_fd, uint16_t sender_port,
                 change_count++;
             }
         } else if (sender->cost + sender->dv[i].cost < e->cost) {
-            printf("DV update: Entry for dest %u changed ", dest_port);
-            printf("from first hop %u cost %u ", e->first_hop_port, e->cost);
+            printf("DV update: Entry for dest %u changed\n", dest_port);
+            printf("    from first hop %u cost %u\n", e->first_hop_port, e->cost);
             e->first_hop_port = sender_port;
             e->cost = sender->cost + sender->dv[i].cost;
             change_count++;
-            printf("to first hop %u cost %u ", e->first_hop_port, e->cost);
+            printf("    to first hop %u cost %u\n", e->first_hop_port, e->cost);
         }
     }
 
     if (change_count > 0) {
-        broadcast_my_dv(socket_fd);
+        print_my_dv();
     } else {
         printf("DV did not change\n");
     }
+    return change_count;
 }
 
 void print_hexadecimal(char *bytes, int length) {
@@ -297,8 +335,13 @@ void server_loop(int socket_fd) {
             printf("Data packet received (behavior not yet implemented)\n");
         break;
         case DV_PACKET:
-            handle_dv_packet(socket_fd, sender_port, buffer, bytes_received);
+            if (handle_dv_packet(sender_port, buffer, bytes_received) > 0) {
+                broadcast_my_dv(socket_fd, DV_PACKET);
+            }
         break;
+        case INITIAL_DV_PACKET:
+            handle_dv_packet(sender_port, buffer, bytes_received);
+            send_my_dv(socket_fd, sender_port);
         default:
             printf("Message not understood\n");
     }
@@ -455,14 +498,6 @@ int main(int argc, char **argv) {
     }
 
     fprintf(stdout, "My label is %c\n", my_label);
-    fprintf(stdout, "Entries in DV table:\n");
-
-    int i;
-    for (i = 0; i < my_dv_length; i++) {
-        fprintf(stdout, "Dest port %u first hop port %u cost %u\n",
-                my_dv[i].dest_port, my_dv[i].first_hop_port, my_dv[i].cost);
-    }
-    fprintf(stdout, "\n\n");
 
     // AF_INET ---> IPv4
     // SOCK_DGRAM ---> UDP
@@ -482,7 +517,8 @@ int main(int argc, char **argv) {
         exit(1);
     }
 
-    broadcast_my_dv(socket_fd);
+    print_my_dv();
+    broadcast_my_dv(socket_fd, INITIAL_DV_PACKET);
     while (1) {
         server_loop(socket_fd);
     }
