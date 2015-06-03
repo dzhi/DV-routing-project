@@ -8,6 +8,8 @@ Actually route a file
     and show the route that it took
 (Done) Detect when router is killed
 (Done) Be able to handle killing a router
+Start overall program (probably shell script to start multiple routers in different terminal windows)
+
 
 Report
 Slides
@@ -19,6 +21,5 @@ Known bugs/issues:
 - Each router assumes all of its neighbors in file are initially live.
 	DV table can contain nodes before they've been initiated. 
 	(not sure if issue or safe to assume all nodes are present unless killed)
-
 
 
