@@ -249,7 +249,7 @@ void print_hexadecimal(char *bytes, int length) {
 void server_loop(int socket_fd) {
     char buffer[BUFFER_SIZE];
     struct sockaddr_in remote_addr;
-    socklen_t remote_addr_len;
+    socklen_t remote_addr_len = sizeof remote_addr;
     ssize_t bytes_received = recvfrom(socket_fd, buffer, BUFFER_SIZE, 0,
             (struct sockaddr *) &remote_addr, &remote_addr_len);
     if (bytes_received < 0) {
