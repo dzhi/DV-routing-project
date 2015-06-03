@@ -7,8 +7,18 @@ Write route tables to log file
 Actually route a file
     and show the route that it took
 (Done) Detect when router is killed
-Be able to handle killing a router
+(Done) Be able to handle killing a router
 
 Report
 Slides
 Test the demo
+
+Known bugs/issues:
+- If you kill a router and restart it, doesn't get re-added to my_dv.
+	(not sure if necessary)
+- Each router assumes all of its neighbors in file are initially live.
+	DV table can contain nodes before they've been initiated. 
+	(not sure if issue or safe to assume all nodes are present unless killed)
+
+
+

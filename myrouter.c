@@ -242,6 +242,89 @@ void handle_dv_packet(int socket_fd, uint16_t sender_port,
     }
 }
 
+
+// handle SIGINT, SIGQUIT, SIGTERM by informing neighbors the router is killed
+//TODO the SIGKILL signal (posix) can't be handled/caught
+// TODO finish testing kill signal, write a paragraph about it when done
+void handle_kill_signal(int sig) {
+
+    // send dying message to all neighbors
+    // message consists of KILLED_PACKET, padded to length of single dv_entry
+
+    printf("Sending Killed broadcast\n");
+    char message[(DV_CAPACITY+1)];
+    message[0] = (char) KILLED_PACKET;
+
+    struct neighbor_list_node *node = my_neighbor_list_head;
+    for (; node!=NULL; node = node->next) {
+        struct sockaddr_in dest_addr;
+        dest_addr.sin_family = AF_INET;
+        dest_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK); // 127.0.0.1
+        dest_addr.sin_port = htons(node->port);
+        if (sendto(my_socket_fd, message, sizeof(struct dv_entry),
+                0, (struct sockaddr *) &dest_addr, sizeof dest_addr) < 0) {
+            perror("Local error trying to send killed packet");
+        }
+    }
+
+    // let self be killed
+    //exit(0);
+    signal(sig, SIG_DFL); // restore default behavior
+    raise(sig);
+
+    return;
+}
+
+// handle if neighbor is killed
+void handle_killed_packet(uint16_t sender_port) {
+    // note: doesn't matter what rest of message is, just that neighbor was killed
+    printf("Killed_packet from port %u:\n", sender_port);
+
+    struct neighbor_list_node *sender =
+            neighbor_list_find(my_neighbor_list_head, sender_port);
+    if (sender == NULL) {
+        // Not necessarily the right thing to do
+        printf("Warning: Sender is not a known neighbor; ignoring its message\n");
+        return;
+    }
+
+    // Dead neighbor is now unreachable, so delete its entry from
+    //  my_dv. We'll do this by moving the last entry into the
+    //  deleted entry's slot.
+
+    // Find what delete in my_dv
+    struct dv_entry *to_delete = dv_find(my_dv, my_dv_length, sender->port);
+    if (to_delete == NULL) {
+        printf("Warning: Sender not found in my_dv, may have already been removed\n");
+        return;
+    }
+
+    // debugging print statement
+    /*printf("my_dv before deletion\n"); 
+    for (int i = 0; i < my_dv_length; i++){
+        printf("%u ", my_dv[i].dest_port);
+    }
+    printf("\n\n");
+    */
+
+    printf("DV update: Deletion: Dest %u no longer reachable (killed)\n",
+            to_delete->dest_port);
+    *to_delete = my_dv[my_dv_length-1]; // point to last entry instead
+    my_dv_length--;
+
+    /*    
+    printf("my_dv after deletion\n");
+    for (int i = 0; i < my_dv_length; i++){
+        printf("%u ", my_dv[i].dest_port);
+    }
+    printf("\n\n");
+    */
+
+    return;
+}
+
+
+
 void print_hexadecimal(char *bytes, int length) {
     int i;
     for (i=0; i<length; i++) {
@@ -304,6 +387,7 @@ void server_loop(int socket_fd) {
         break;
         case KILLED_PACKET:
             handle_killed_packet(sender_port);
+        break;
         default:
             printf("Message not understood\n");
     }
@@ -435,83 +519,6 @@ int str_to_uint16(const char *str, uint16_t *result) {
     return 0;
 }
 
-
-// handle SIGINT, SIGQUIT, SIGTERM by informing neighbors the router is killed
-//TODO the SIGKILL signal (posix) can't be handled/caught
-void handle_kill_signal(int sig) {
-
-    // send dying message to all neighbors
-    // message consists of KILLED_PACKET, padded to length of single dv_entry
-
-    printf("Sending Killed broadcast\n");
-    char message[(DV_CAPACITY+1)];
-    message[0] = (char) KILLED_PACKET;
-
-    struct neighbor_list_node *node = my_neighbor_list_head;
-    for (; node!=NULL; node = node->next) {
-        struct sockaddr_in dest_addr;
-        dest_addr.sin_family = AF_INET;
-        dest_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK); // 127.0.0.1
-        dest_addr.sin_port = htons(node->port);
-        if (sendto(my_socket_fd, message, sizeof(struct dv_entry),
-                0, (struct sockaddr *) &dest_addr, sizeof dest_addr) < 0) {
-            perror("Local error trying to send killed packet");
-        }
-    }
-
-    // let self be killed
-    //exit(0);
-    signal(sig, SIG_DFL); // restore default behavior
-    raise(sig);
-
-    return;
-}
-
-// handle if neighbor is killed
-void handle_killed_packet(uint16_t sender_port) {
-    // note: doesn't matter what rest of message is, just that neighbor was killed
-    printf("Killed_packet from port %u:\n", sender_port);
-
-    struct neighbor_list_node *sender =
-            neighbor_list_find(my_neighbor_list_head, sender_port);
-    if (sender == NULL) {
-        // Not necessarily the right thing to do
-        printf("Warning: Sender is not a known neighbor; ignoring its message\n");
-        return;
-    }
-
-    // Dead neighbor is now unreachable, so delete its entry from
-    //  my_dv. We'll do this by moving the last entry into the
-    //  deleted entry's slot.
-
-    // Find what delete in my_dv
-    struct dv_entry *to_delete = dv_find(my_dv, my_dv_length, sender->port);
-    if (to_delete == NULL) {
-        printf("Warning: Sender not found in my_dv, may have already been removed\n");
-        return;
-    }
-
-    printf("TODO before deletion\n");
-    for (int i = 0; i < my_dv_length; i++){
-        printf("%u ", my_dv[i].dest_port);
-    }
-    printf("\n\n");
-
-    printf("DV update: Deletion: Dest %u no longer reachable (killed)\n",
-            to_delete->dest_port);
-    to_delete = &my_dv[my_dv_length-1]; // point to last entry instead
-    my_dv_length--;
-
-    
-    printf("TODO after deletion\n");
-    for (int i = 0; i < my_dv_length; i++){
-        printf("%u ", my_dv[i].dest_port);
-    }
-    printf("\n\n");
-
-
-    return;
-}
 
 
 int main(int argc, char **argv) {
