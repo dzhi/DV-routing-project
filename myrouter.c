@@ -254,6 +254,7 @@ void initialize_neighbors(const char *file_name) {
 
     struct neighbor_list_node *next = NULL; // tail node added first, has NULL next
     struct neighbor_list_node* current = NULL;
+    int num_neighbors = 0;
 
     FILE* f = fopen(file_name, "rt");
     char line[MAX_LINE_LEN];
@@ -274,13 +275,19 @@ void initialize_neighbors(const char *file_name) {
 
         if (src == my_label) {
             current = new_neighbor_list_node(port, cost, next);
-            // TODO update entry and DV length
+            my_dv[num_neighbors].port = port;
+            my_dv[num_neighbors].cost = cost;
+            num_neighbors++;
+
+
             next = current;
         }
     }
 
     fclose(f);
     my_neighbor_list_head = current;
+    my_dv_length = num_neighbors;
+
 
     return;
 }
@@ -313,6 +320,20 @@ int main(int argc, char **argv) {
     find_label("sample_topology.txt"); // find node's own name
     initialize_neighbors("sample_topology.txt");
 
+    // TODO print intialized values
+    struct neighbor_list_node *node = my_neighbor_list_head;
+    fprintf(stdout, "My neighbors are:\n")
+    for (; node!=NULL; node = node->next) {
+        fprintf(stdout, "Port %u Cost %u\n", node.entry[0]);
+    }
+
+    fprintf(stdout, "my label is %c\n", my_label);
+    fprintf(stdout, "Entries in DV table\n");
+
+    for (int i = 0; i < my_dv_length; i++) {
+        fprintf(stdout, "Port %u Cost %u\n", my_dv[i].port, my_dv[i].cost);
+    }
+    fprintf(stdout, "\n\n")
 
     // AF_INET ---> IPv4
     // SOCK_DGRAM ---> UDP
