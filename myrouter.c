@@ -366,13 +366,15 @@ void handle_data_packet( char *buffer ){
 
     char bodybuf[81]; 
     strncpy(bodybuf, buffer+4, MAX_BODY_LEN); //message body
-    uint16_t dest_port = buffer[2] | uint16_t(buffer[3]) << 8;
+    //uint16_t dest_port = buffer[2] | uint16_t(buffer[3]) << 8;
+    uint16_t dest_port = buffer[3];
     //check if we are at at the destined router
     if ( dest_port == my_port ){
         //print_my_data(); //TODO: add the path array
     }
     else{
         //forward it to the nextHop
+
         //@Lloyd: I'm not sure if I need to create a new socket to send it over? just using my_socket_fd for now
         struct dv_entry *dv = dv_find(my_dv, my_dv_length, dest_port);
         uint16_t next_port = dv->first_hop_port;
@@ -625,16 +627,15 @@ int generate_traffic(char src_label, char dest_label, const char *topology_file_
     size_t msg_sz = 4*sizeof(struct dv_entry) + MAX_BODY_LEN + 1;
     char message[msg_sz];
 
-    char lo = dest_port & 0xFF;
-    char hi = dest_port >> 8;
-
+    //char lo = dest_port & 0xFF;
+    //char hi = dest_port >> 8;
     message[0] = (char) DATA_PACKET;
-    message[1] = dest_label;
-    message[2] = lo;
-    message[3] = hi;
+    message[1] = src_label;
+    message[2] = dest_label;
+    message[3] = htons(dest_port);
     strncpy(message + 4, bodybuf, MAX_BODY_LEN);
 
-
+    
     printf("Injecting data into network\n");
     send_message(socket_fd, message, msg_sz, src_port); 
 
