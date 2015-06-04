@@ -557,7 +557,8 @@ int generate_traffic(char src_label, char dest_label, const char *topology_file_
     printf("What message would you like to send from %c to %c? (up to 80 char)\n", 
         src_label, dest_label);
 
-    if (scanf("%255s", bodybuf) != 1) {
+    // allow spaces until newline, discard newline
+    if (scanf("%81[^\n]%*c", bodybuf) != 1) { 
         fprintf(stderr, "Error: Could not read message for traffic generation\n");
         exit(1);
     }
