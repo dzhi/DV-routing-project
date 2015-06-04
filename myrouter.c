@@ -384,6 +384,7 @@ void handle_data_packet( char *buffer ){
 
         fprintf(log_file, "Timestamp %u sourceID %c destID %c arrivalPort %u prevPort %u\n", time , buffer[1], buffer[2], my_port, my_port  );
 
+        printf("Timestamp %u sourceID %c destID %c arrivalPort %u prevPort %u\n", time , buffer[1], buffer[2], my_port, my_port  );
         
         send_message(my_socket_fd, buffer, msg_sz, next_port);
     }
@@ -699,7 +700,7 @@ int main(int argc, char **argv) {
     // if using this router as a traffic generator from initial point to dest
     // ex/       ./myrouter 10006 A D
     if (argc == 4) {
-        if (my_port >= 10000 && my_port <= 10005) {
+        if (my_port <= 10000 && my_port >= 10005) {
             fprintf(stderr, "Error: Port number %s cannot be used for traffic generator\n", port_no_str);
             exit(1);
         }
