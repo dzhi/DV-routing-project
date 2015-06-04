@@ -15,9 +15,8 @@
 // (Really only needs to be 5 for the purposes of the project)
 #define DV_CAPACITY 16
 
-// Max line size in topology file (for fgets)
-#define MAX_LINE_LEN 80
-
+#define MAX_LINE_LEN 80 // Max line size in topology file (for fgets)
+#define MAX_BODY_LEN 81 // Max size of msg body of data packet
 #define LOG_FILE_NAME_LEN 256
 
 enum packet_type {
@@ -406,6 +405,7 @@ void server_loop(int socket_fd) {
     switch (buffer[0]) {
         case DATA_PACKET:
             printf("Data packet received (behavior not yet implemented)\n");
+            printf("%s\n", buffer);
         break;
         case DV_PACKET:
             if (handle_dv_packet(sender_port, buffer, bytes_received) > 0) {
@@ -519,15 +519,15 @@ int generate_traffic(char src_label, char dest_label, const char *topology_file_
     bodybuf[80] = '\0';
     uint16_t src_port; // corresponding ports to given labels
     uint16_t dest_port;
-    bool src_port_found = false;
-    bool dest_port_found = false;
+    int src_port_found = 0;
+    int dest_port_found = 0;
 
 
-    printf("What message would you like to send from %c to %c? (up to 80 char)", 
+    printf("What message would you like to send from %c to %c? (up to 80 char)\n", 
         src_label, dest_label);
 
     if (scanf("%255s", bodybuf) != 1) {
-        fprintf(stderr, "Error: Could not read message for traffic generation\n", );
+        fprintf(stderr, "Error: Could not read message for traffic generation\n");
         exit(1);
     }
 
@@ -546,42 +546,102 @@ int generate_traffic(char src_label, char dest_label, const char *topology_file_
 
         if (src == src_label) {
             src_port = port;
-            src_port_found = true;
+            src_port_found = 1;
         }
 
         if (dest == dest_label) {
             dest_port = port;
-            dest_port_found = true;
+            dest_port_found = 1;
         }
-
     }
+
+
+    if (!(src_port_found && dest_port_found)) {
+        fprintf(stderr, "Error: Cannot find both corresponding ports\n");
+        exit(1);
+    }
+
+
+    // create socket
+    int socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (socket_fd < 0) {
+        perror("Error creating socket");
+        exit(1);
+    }
+    struct sockaddr_in server_addr;
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    server_addr.sin_port = htons(my_port);
+    if (bind(socket_fd,
+            (struct sockaddr *) &server_addr,
+            sizeof server_addr) < 0) {
+        perror("Error binding socket");
+        exit(1);
+    }
+
+    my_socket_fd = socket_fd; // set global too
+
 
     // send message to src port consisting of 
-    //  DATA flag padded to entry length
-    //  ultimate destination padded to entry length
-    //  message body
-    if (src_port_found && dest_port_found) {
+    //      DATA flag
+    //      ultimate destination label
+    //      ultimate destination port (low byte)
+    //      ultimate destination port (hi byte)
+    //      message body
+
+// reassemble uint16_t like this:
+    // uint16_t value = lo | uint16_t(hi) << 8;
+//http://stackoverflow.com/questions/13279024/convert-a-uint16-t-to-char2-to-be-sent-over-socket-unix
+
+    // sloppy array stuff
+    size_t msg_sz = 4*sizeof(struct dv_entry) + MAX_BODY_LEN + 1;
+    char message[msg_sz];
+
+    char lo = dest_port & 0xFF;
+    char hi = dest_port >> 8;
+
+    message[0] = (char) DATA_PACKET;
+    message[1] = dest_label;
+    message[2] = lo;
+    message[3] = hi;
+    strncpy(message + 4, bodybuf, MAX_BODY_LEN);
 
 
-void broadcast_my_dv(int socket_fd, enum packet_type type) {
-    printf("Sending DV broadcast\n");
-    char message[(DV_CAPACITY+1)*(sizeof(struct dv_entry))];
-    create_dv_message(message, type);
+    printf("Injecting data into network\n");
+    send_message(socket_fd, message, msg_sz, dest_port); 
 
-    struct neighbor_list_node *node = my_neighbor_list_head;
-    for (; node!=NULL; node = node->next) {
-        send_message(socket_fd, message,
-                (my_dv_length+1)*(sizeof(struct dv_entry)), node->port);
+
+    // write output
+    // 
+     /*But before H exits, H should print out to its output file the data packet that it sent to
+destination D through router A, i.e. 
+print out the header fields of the data packet 
+such as the UDP destination
+port number on router A, 
+the destination ID=D, 
+and the text phrase in the data payload.*/
+
+    char log_file_name[LOG_FILE_NAME_LEN];
+    strcpy(log_file_name, "routing-output_.txt");
+    log_file_name[14] = my_label; // will be 'H'
+    log_file = fopen(log_file_name, "w");
+    if (log_file == NULL) {
+        fprintf(stderr, "Error: Failed to open log file %s\n", log_file_name);
+        exit(1);
     }
-}
+    fprintf(log_file, "This is traffic generator %c on port %u\n", my_label, my_port);
+    fprintf(log_file, "Sending a data packet to router %c on port %u\n", src_label, src_port);
+    fprintf(log_file, "With ultimate destination being router %c on port %u\n", dest_label, dest_port);
+    fprintf(log_file, "The message payload is as follows:\n");
+    fprintf(log_file, "%s\n", bodybuf);
 
-        return;
+
+        return 0;
     }
 
-    fprintf(stderr, "Error: Cannot find both corresponding ports\n");
-    exit(1);
 
-}
+
+
 
 int str_to_uint16(const char *str, uint16_t *result) {
     char *end;
@@ -610,12 +670,13 @@ int main(int argc, char **argv) {
     // if using this router as a traffic generator from initial point to dest
     // ex/       ./myrouter 10006 A D
     if (argc == 4) {
-        if (myport >= 10000 && myport <= 10005) {
+        if (my_port >= 10000 && my_port <= 10005) {
             fprintf(stderr, "Error: Port number %s cannot be used for traffic generator\n", port_no_str);
             exit(1);
         }
 
-        // will prompt user for message and send from src label to dest label
+        my_label = 'H'; // traffic generator gets label H, not part of network
+        // will prompt user for message and send to first specified node
         generate_traffic(argv[2][0], argv[3][0], "sample_topology.txt"); 
 
         return 0; // quit after injecting message

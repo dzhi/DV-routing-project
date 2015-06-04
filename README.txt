@@ -7,6 +7,12 @@ TODO:
 (TODO) Actually route a file
     and show the route that it took
     ... by having each router along the way write info to its log file
+
+	(TODO) Handle a data packet that needs forward (forward and write to log)
+	(TODO) Handle a data packet that is destined for you (write info and body to log)
+(Done) Conditionally make router act as a traffic generator and write to its log
+
+
 (Done) Detect when router is killed
 (Done) Be able to handle killing a router
 (Done) Start overall program (probably shell script to start multiple routers in different terminal windows)
