@@ -362,6 +362,32 @@ void print_hexadecimal(char *bytes, int length) {
     }
 }
 
+void handle_data_packet( char *buffer ){
+
+    char bodybuf[81]; 
+    strncpy(bodybuf, buffer+4, MAX_BODY_LEN); //message body
+    uint16_t dest_port = buffer[2] | uint16_t(buffer[3]) << 8;
+    //check if we are at at the destined router
+    if ( dest_port == my_port ){
+        //print_my_data(); //TODO: add the path array
+    }
+    else{
+        //forward it to the nextHop
+        //@Lloyd: I'm not sure if I need to create a new socket to send it over? just using my_socket_fd for now
+        struct dv_entry *dv = dv_find(my_dv, my_dv_length, dest_port);
+        uint16_t next_port = dv->first_hop_port;
+        size_t msg_sz = 4*sizeof(struct dv_entry) + MAX_BODY_LEN + 1;
+        //print to the router file before sending
+        uint16_t time = 1111; //testing
+
+        fprintf(log_file, "Timestamp %u sourceID %c destID %c arrivalPort %u prevPort %u\n", time , buffer[1], buffer[2], my_port, my_port  );
+
+        
+        send_message(my_socket_fd, buffer, msg_sz, next_port);
+    }
+
+}
+
 // Send a UDP packet in Bash using
 //      echo -n "Test" > /dev/udp/localhost/10001
 // Send hexadecimal bytes in Bash using
@@ -405,6 +431,7 @@ void server_loop(int socket_fd) {
     switch (buffer[0]) {
         case DATA_PACKET:
             printf("Data packet received (behavior not yet implemented)\n");
+            handle_data_packet( buffer ); 
             printf("%s\n", buffer);
         break;
         case DV_PACKET:
@@ -427,6 +454,7 @@ void server_loop(int socket_fd) {
     }
     printf("\n");
 }
+
 
 struct neighbor_list_node *
 new_neighbor_list_node(uint16_t port, uint16_t cost,
@@ -608,7 +636,7 @@ int generate_traffic(char src_label, char dest_label, const char *topology_file_
 
 
     printf("Injecting data into network\n");
-    send_message(socket_fd, message, msg_sz, dest_port); 
+    send_message(socket_fd, message, msg_sz, src_port); 
 
 
     // write output
