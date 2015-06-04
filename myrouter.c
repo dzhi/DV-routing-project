@@ -78,7 +78,7 @@ neighbor_list_find(struct neighbor_list_node *list_head, uint16_t port) {
 //-----------------------------------------------------------------------------
 // Global variables
 char my_label; // used find immediate neighbors in topology files
-// TODO set own label. also, not sure if okay to assume node names are 1 char?
+// Note: we assume node names are single char
 uint16_t my_port;
 struct dv_entry my_dv[DV_CAPACITY];
 int my_dv_length = 0;
@@ -304,8 +304,7 @@ int handle_dv_packet(uint16_t sender_port, char *buffer,
 }
 
 // handle SIGINT, SIGQUIT, SIGTERM by informing neighbors the router is killed
-//TODO the SIGKILL signal (posix) can't be handled/caught
-// TODO finish testing kill signal, write a paragraph about it when done
+// Note: the SIGKILL signal (posix) can't be handled/caught
 void handle_kill_signal(int sig) {
 
     // send dying message to all neighbors
@@ -496,9 +495,7 @@ void initialize_neighbors(const char *file_name) {
         uint16_t port;
         uint16_t cost;
 
-        // TODO check if sscanf was successful
         if (sscanf(line, "%c,%c,%" SCNd16 ",%" SCNd16 "", &src, &dest, &port, &cost) < 4){
-            //sscanf(line, "%c,%c,%u,%u", &src, &dest, &port, &cost);
             fprintf(stderr, "Error: cannot read network topology file");
             exit(1);
 
@@ -513,6 +510,77 @@ void initialize_neighbors(const char *file_name) {
     fclose(f);
     my_neighbor_list_head = current;
     return;
+}
+
+// prompts user for message body, then sends through src node with ultimate goal dest
+int generate_traffic(char src_label, char dest_label, const char *topology_file_name){
+
+    char bodybuf[81];
+    bodybuf[80] = '\0';
+    uint16_t src_port; // corresponding ports to given labels
+    uint16_t dest_port;
+    bool src_port_found = false;
+    bool dest_port_found = false;
+
+
+    printf("What message would you like to send from %c to %c? (up to 80 char)", 
+        src_label, dest_label);
+
+    if (scanf("%255s", bodybuf) != 1) {
+        fprintf(stderr, "Error: Could not read message for traffic generation\n", );
+        exit(1);
+    }
+
+    FILE* f = fopen(topology_file_name, "rt");
+    char line[MAX_LINE_LEN];
+    while(fgets(line, MAX_LINE_LEN, f) != NULL){
+        char src;
+        char dest;
+        uint16_t port;
+        uint16_t cost;
+
+        if (sscanf(line, "%c,%c,%" SCNd16 ",%" SCNd16 "", &src, &dest, &port, &cost) < 4){
+            fprintf(stderr, "Error: cannot read network topology file\n");
+            exit(1);
+        }
+
+        if (src == src_label) {
+            src_port = port;
+            src_port_found = true;
+        }
+
+        if (dest == dest_label) {
+            dest_port = port;
+            dest_port_found = true;
+        }
+
+    }
+
+    // send message to src port consisting of 
+    //  DATA flag padded to entry length
+    //  ultimate destination padded to entry length
+    //  message body
+    if (src_port_found && dest_port_found) {
+
+
+void broadcast_my_dv(int socket_fd, enum packet_type type) {
+    printf("Sending DV broadcast\n");
+    char message[(DV_CAPACITY+1)*(sizeof(struct dv_entry))];
+    create_dv_message(message, type);
+
+    struct neighbor_list_node *node = my_neighbor_list_head;
+    for (; node!=NULL; node = node->next) {
+        send_message(socket_fd, message,
+                (my_dv_length+1)*(sizeof(struct dv_entry)), node->port);
+    }
+}
+
+        return;
+    }
+
+    fprintf(stderr, "Error: Cannot find both corresponding ports\n");
+    exit(1);
+
 }
 
 int str_to_uint16(const char *str, uint16_t *result) {
@@ -532,11 +600,27 @@ int main(int argc, char **argv) {
         exit(1);
     }
 
+
     char *port_no_str = argv[1];
     if (str_to_uint16(port_no_str, &my_port) < 0) {
         fprintf(stderr, "Error: Invalid port number %s\n", port_no_str);
         exit(1);
     }
+
+    // if using this router as a traffic generator from initial point to dest
+    // ex/       ./myrouter 10006 A D
+    if (argc == 4) {
+        if (myport >= 10000 && myport <= 10005) {
+            fprintf(stderr, "Error: Port number %s cannot be used for traffic generator\n", port_no_str);
+            exit(1);
+        }
+
+        // will prompt user for message and send from src label to dest label
+        generate_traffic(argv[2][0], argv[3][0], "sample_topology.txt"); 
+
+        return 0; // quit after injecting message
+    }
+
 
     // TODO give user option to specify file
     find_label("sample_topology.txt"); // Find this node's own name
