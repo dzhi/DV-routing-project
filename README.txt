@@ -4,7 +4,7 @@ TODO:
 (Done) Write route tables to log file
 (Fixed) 0.0.0.0 bug (the first time the "router" receives a message, it thinks
     it received the message from IP address 0.0.0.0 port 0 for some reason)
-(TODO) Actually route a file
+(DONE) Actually route a file
     (DONE) and show the route that it took 
     ... by having each router along the way write info to its log file
      (each router it passes through records from whence it came, where it goess)
@@ -20,9 +20,9 @@ TODO:
 (Done) Start overall program (probably shell script to start multiple routers in different terminal windows)
 
 ok
-(TODO) Report
-(TODO) Slides
-(TODO) Test the demo
+(DONE) Report
+(DONE) Slides
+(DONE) Test the demo
 
 (Done I think) Known bugs/issues:
 - If you kill a router and restart it, doesn't get re-added to my_dv.
@@ -30,4 +30,8 @@ ok
 - Each router assumes all of its neighbors in file are initially live.
 	DV table can contain nodes before they've been initiated. 
 	(not sure if issue or safe to assume all nodes are present unless killed)
+
+
+(DONE) When node becomes unreachable, other nodes keep broadcasting and trying to look for it
+
 

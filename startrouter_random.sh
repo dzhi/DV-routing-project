@@ -5,7 +5,7 @@
 
 
 declare -a Ports=('10000' '10001' '10002' '10003' '10004' '10005')
-echo ${Ports[@]} # print all array entries
+#echo ${Ports[@]} # print all array entries
 
 
 for i in 0 1 2 3 4 5
@@ -18,7 +18,7 @@ do
 
 
 	# start a router with that port number
-	./myrouter $port &
+	xterm -e ./myrouter $port &
 	sleep 0.2
 
 	# remove used port from array
