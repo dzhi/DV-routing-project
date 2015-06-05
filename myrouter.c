@@ -725,7 +725,7 @@ int main(int argc, char **argv) {
     // ex/       ./myrouter 10006 A D
     if (argc == 4) {
         // cannot use ports _between_ 10000 and 10005 bc they are reserved for network
-        if (my_port <= 10000 && my_port >= 10005) {
+        if (my_port >= 10000 && my_port <= 10005) {
             fprintf(stderr, "Error: Port number %s is reserved for in-network routers\n", port_no_str);
             exit(1);
         }
