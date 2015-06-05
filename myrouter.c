@@ -19,6 +19,7 @@
 #define MAX_LINE_LEN 80 // Max line size in topology file (for fgets)
 #define MAX_BODY_LEN 81 // Max size of msg body of data packet
 #define LOG_FILE_NAME_LEN 256
+#define MAX_POSSIBLE_COST 64
 
 enum packet_type {
     DATA_PACKET = 1,
@@ -145,8 +146,7 @@ void broadcast_my_dv(int socket_fd, enum packet_type type) {
     }
 }
 
-// Returns 1 if taking the first hop to sender_port to get to dest_port is
-//  cheaper than the current best way to get to dest_port.
+// Returns 1 if DV was changed.
 // Returns 0 if not.
 // Returns a negative number if an error occured.
 int bellman_ford_decrease(uint16_t dest_port, uint16_t sender_port,
@@ -156,6 +156,9 @@ int bellman_ford_decrease(uint16_t dest_port, uint16_t sender_port,
     }
     struct dv_entry *e = dv_find(my_dv, my_dv_length, dest_port);
     if (e == NULL) {
+        if (cost_thru_sender >= MAX_POSSIBLE_COST) {
+            return 0;
+        }
         if (my_dv_length >= DV_CAPACITY) {
             // Not necessarily the right thing to do
             printf("Warning: DV is full, new entry is discarded\n");
@@ -171,6 +174,15 @@ int bellman_ford_decrease(uint16_t dest_port, uint16_t sender_port,
             my_dv_length++;
             return 1;
         }
+    } else if (cost_thru_sender >= MAX_POSSIBLE_COST) {
+        // The target is now unreachable, so delete its entry from
+        //  my_dv. We'll do this by moving the last entry into the
+        //  deleted entry's slot.
+        printf("DV update: Deletion: Dest %u no longer reachable\n",
+                dest_port);
+        *e = my_dv[my_dv_length-1];
+        my_dv_length--;
+        return 1;
     } else if (cost_thru_sender < e->cost) {
         printf("DV update: Entry for dest %u changed ", dest_port);
         printf("    from first hop %u cost %u ", e->first_hop_port, e->cost);
@@ -256,7 +268,7 @@ int handle_dv_packet(uint16_t sender_port, char *buffer,
                         is_reachable = 1;
                     }
                 }
-                if (is_reachable) {
+                if (is_reachable && min_cost < MAX_POSSIBLE_COST) {
                     my_dv[i].first_hop_port = best_first_hop_port;
                     my_dv[i].cost = min_cost;
                     change_count++;
@@ -343,18 +355,21 @@ void handle_killed_packet(uint16_t sender_port) {
         return;
     }
     printf("DV update: Deletion: Neighbor %u died\n", to_delete->dest_port);
-    *to_delete = my_dv[my_dv_length-1];
-    my_dv_length--;
-
 
     // Update rest of DV table (anything with dead neighbor as first hop is affected)
     // use dummy buffer to call BF alg in handle_dv_packet
-    char buffer[(sizeof(struct dv_entry))]; // buffer the size of dv entry
-
+    char buffer[sizeof(struct dv_entry)]; // buffer the size of dv entry
     handle_dv_packet(sender_port, buffer, sizeof(struct dv_entry));
-    broadcast_my_dv(my_socket_fd, DV_PACKET);
-    printf("Finished update and broadcast following Killed_packet from port %u:\n", sender_port);
 
+    to_delete = dv_find(my_dv, my_dv_length, sender->port);
+    if (to_delete != NULL) {
+        printf("Neighbor %u didn't get deleted first time, deleting now\n", sender_port);
+        *to_delete = my_dv[my_dv_length-1];
+        my_dv_length--;
+    }
+
+    broadcast_my_dv(my_socket_fd, DV_PACKET);
+    printf("Finished dv_table update and broadcast following Killed_packet from port %u:\n", sender_port);
 
     return;
 }
