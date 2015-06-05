@@ -7,6 +7,7 @@
 #include <arpa/inet.h>
 #include <inttypes.h>
 #include <signal.h>
+#include <time.h>
 
 // Size of the buffer for packet payload
 #define BUFFER_SIZE 65536
@@ -362,32 +363,44 @@ void print_hexadecimal(char *bytes, int length) {
     }
 }
 
-void handle_data_packet( char *buffer ){
+void handle_data_packet( uint16_t sender_port, char *buffer ){
 
     char bodybuf[81]; 
-    strncpy(bodybuf, buffer+4, MAX_BODY_LEN); //message body
+    strncpy(bodybuf, buffer+5, MAX_BODY_LEN); //message body
     //uint16_t dest_port = buffer[2] | uint16_t(buffer[3]) << 8;
-    uint16_t dest_port = buffer[3];
+    uint16_t dest_port = ntohs(*((uint16_t *) &(buffer[3])));
     //check if we are at at the destined router
-    if ( dest_port == my_port ){
-        //print_my_data(); //TODO: add the path array
-    }
-    else{
-        //forward it to the nextHop
 
-        //@Lloyd: I'm not sure if I need to create a new socket to send it over? just using my_socket_fd for now
+    time_t ltime;
+    ltime = time(NULL);
+
+    fprintf(log_file, "Timestamp %s sourceID %c destID %c arrivalPort %u prevPort %u\n", 
+        asctime(localtime(&ltime)) , buffer[1], buffer[2], my_port, sender_port);
+    fflush(log_file);
+    printf("Timestamp %s sourceID %c destID %c arrivalPort %u prevPort %u\n", 
+        asctime(localtime(&ltime)) , buffer[1], buffer[2], my_port, sender_port);
+
+    if ( dest_port != my_port ){
         struct dv_entry *dv = dv_find(my_dv, my_dv_length, dest_port);
+        if (dv == NULL) {
+            fprintf(stderr, "DV entry not found for destination port %u\n", dest_port);
+            return;
+        }
+
         uint16_t next_port = dv->first_hop_port;
-        size_t msg_sz = 4*sizeof(struct dv_entry) + MAX_BODY_LEN + 1;
-        //print to the router file before sending
-        uint16_t time = 1111; //testing
+        fprintf(log_file, "next port %u\n", next_port);
+        fflush(log_file);
 
-        fprintf(log_file, "Timestamp %u sourceID %c destID %c arrivalPort %u prevPort %u\n", time , buffer[1], buffer[2], my_port, my_port  );
-
-        printf("Timestamp %u sourceID %c destID %c arrivalPort %u prevPort %u\n", time , buffer[1], buffer[2], my_port, my_port  );
-        
+        printf("next port %u\n", next_port);
+        size_t msg_sz = 5*sizeof(char) + MAX_BODY_LEN + 1;
         send_message(my_socket_fd, buffer, msg_sz, next_port);
     }
+    else {
+        fprintf(log_file, "%s\n", bodybuf);
+        fflush(log_file); // force it to write
+        printf("Received message!\n%s\n", bodybuf);
+    }
+
 
 }
 
@@ -433,9 +446,8 @@ void server_loop(int socket_fd) {
 
     switch (buffer[0]) {
         case DATA_PACKET:
-            printf("Data packet received (behavior not yet implemented)\n");
-            handle_data_packet( buffer ); 
-            printf("%s\n", buffer);
+            printf("Data packet received\n");
+            handle_data_packet(sender_port, buffer);
         break;
         case DV_PACKET:
             if (handle_dv_packet(sender_port, buffer, bytes_received) > 0) {
@@ -568,7 +580,7 @@ int generate_traffic(char src_label, char dest_label, const char *topology_file_
     while(fgets(line, MAX_LINE_LEN, f) != NULL){
         char src;
         char dest;
-        uint16_t port;
+        uint16_t port; // dest port
         uint16_t cost;
 
         if (sscanf(line, "%c,%c,%" SCNd16 ",%" SCNd16 "", &src, &dest, &port, &cost) < 4){
@@ -576,7 +588,7 @@ int generate_traffic(char src_label, char dest_label, const char *topology_file_
             exit(1);
         }
 
-        if (src == src_label) {
+        if (dest == src_label) {
             src_port = port;
             src_port_found = 1;
         }
@@ -617,16 +629,12 @@ int generate_traffic(char src_label, char dest_label, const char *topology_file_
     // send message to src port consisting of 
     //      DATA flag
     //      ultimate destination label
-    //      ultimate destination port (low byte)
-    //      ultimate destination port (hi byte)
+    //      ultimate destination port byte
+    //      ultimate destination port byte
     //      message body
 
-// reassemble uint16_t like this:
-    // uint16_t value = lo | uint16_t(hi) << 8;
-//http://stackoverflow.com/questions/13279024/convert-a-uint16-t-to-char2-to-be-sent-over-socket-unix
-
     // sloppy array stuff
-    size_t msg_sz = 4*sizeof(struct dv_entry) + MAX_BODY_LEN + 1;
+    size_t msg_sz = 5*sizeof(char) + MAX_BODY_LEN + 1;
     char message[msg_sz];
 
     //char lo = dest_port & 0xFF;
@@ -634,8 +642,9 @@ int generate_traffic(char src_label, char dest_label, const char *topology_file_
     message[0] = (char) DATA_PACKET;
     message[1] = src_label;
     message[2] = dest_label;
-    message[3] = htons(dest_port);
-    strncpy(message + 4, bodybuf, MAX_BODY_LEN);
+    message[3] = htons(dest_port) & 0xFF;
+    message[4] = htons(dest_port) >> 8;
+    strncpy(message + 5, bodybuf, MAX_BODY_LEN);
 
     
     printf("Injecting data into network\n");
