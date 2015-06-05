@@ -192,7 +192,7 @@ int bellman_ford_decrease(uint16_t dest_port, uint16_t sender_port,
 int handle_dv_packet(uint16_t sender_port, char *buffer,
         ssize_t bytes_received) {
     if (bytes_received % sizeof(struct dv_entry) != 0) {
-        printf("Message not understood\n");
+        printf("Message not understood, length is not multiple of dv entry size\n");
         return -1;
     }
     printf("DV packet from port %u:\n", sender_port);
@@ -324,8 +324,7 @@ void handle_kill_signal(int sig) {
 }
 
 void handle_killed_packet(uint16_t sender_port) {
-    // Note: doesn't matter what rest of message is, just that neighbor was
-    // killed
+    // Note: doesn't matter what rest of message is, just that neighbor was killed
     printf("Killed_packet from port %u:\n", sender_port);
 
     struct neighbor_list_node *sender =
@@ -346,6 +345,16 @@ void handle_killed_packet(uint16_t sender_port) {
     printf("DV update: Deletion: Neighbor %u died\n", to_delete->dest_port);
     *to_delete = my_dv[my_dv_length-1];
     my_dv_length--;
+
+
+    // Update rest of DV table (anything with dead neighbor as first hop is affected)
+    // use dummy buffer to call BF alg in handle_dv_packet
+    char buffer[(sizeof(struct dv_entry))]; // buffer the size of dv entry
+
+    handle_dv_packet(sender_port, buffer, sizeof(struct dv_entry));
+    broadcast_my_dv(my_socket_fd, DV_PACKET);
+    printf("Finished update and broadcast following Killed_packet from port %u:\n", sender_port);
+
 
     return;
 }
@@ -440,7 +449,7 @@ void server_loop(int socket_fd) {
     printf("\n");
 
     if (bytes_received == 0) {
-        printf("Message not understood\n");
+        printf("Message not understood, 0 bytes received\n");
         return;
     }
 
@@ -465,7 +474,7 @@ void server_loop(int socket_fd) {
             }
         break;
         default:
-            printf("Message not understood\n");
+            printf("Message not understood, packet type not recognized\n");
     }
     printf("\n");
 }
@@ -652,14 +661,6 @@ int generate_traffic(char src_label, char dest_label, const char *topology_file_
 
 
     // write output
-    // 
-     /*But before H exits, H should print out to its output file the data packet that it sent to
-destination D through router A, i.e. 
-print out the header fields of the data packet 
-such as the UDP destination
-port number on router A, 
-the destination ID=D, 
-and the text phrase in the data payload.*/
 
     char log_file_name[LOG_FILE_NAME_LEN];
     strcpy(log_file_name, "routing-output_.txt");
@@ -676,10 +677,8 @@ and the text phrase in the data payload.*/
     fprintf(log_file, "%s\n", bodybuf);
 
 
-        return 0;
-    }
-
-
+    return 0;
+}
 
 
 
